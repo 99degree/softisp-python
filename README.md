@@ -55,12 +55,15 @@ python test_full_pipeline.py --model_dir onnx_out/softisp_pipeline_test
 - Provide 2 to 5 example raw images and expected outputs.
 
 **Medium term**  
-- Improve accuracy and add more test data.  
-- Add simple performance improvements and a demo script.
+- Improve accuracy and add more test data(done).  
+- Add simple performance improvements and a demo script(done).
 
 **Long term**  
-- Add auto exposure and auto white balance tuning.  
+- Add auto exposure and auto white balance tuning(done).  
 - Build a small web demo or GUI for non technical users.
+
+**Status**
+- Had a complete and simple pipeline(awb,blacklevel,demosaic,ccm,gamma)
 
 ---
 
