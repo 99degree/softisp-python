@@ -1,0 +1,18 @@
+{
+  "canonical_name": "softisp_pipeline_test",
+  "stages": {
+    "image_desc": {"class":"image_desc_base","version":"v0","inputs":[""]},
+    "bayer2cfa": {"class":"bayer2cfa","version":"v0.rggb","inputs":["image_desc"]},
+    "bayernorm": {"class":"bayernorm_10bit","version":"v0","inputs":["bayer2cfa"]},
+    "stride_remove": {"class":"stride_remove_crop","version":"v0","inputs":["bayernorm"]},
+    "blacklevel": {"class":"blacklevel","version":"v2","inputs":["stride_remove"]},
+    "demosaic": {"class":"demosaic_base","version":"v0","inputs":["blacklevel", "bayer2cfa"]},
+    "awb": {"class":"wb_avg_v1","version":"v1","inputs":["demosaic"]},
+    "ccm": {"class":"ccm_quadratic_v1","version":"v1","inputs":["awb"]},
+    "tonemap": {"class":"tonemap_base","version":"v0","inputs":["ccm"]},
+    "gamma": {"class":"gamma_base","version":"v0","inputs":["tonemap"]},
+    "rgb": {"class":"image_desc_v1","version":"v1-int16","inputs":["gamma","image_desc"]},
+    "yuv": {"class":"yuvconvert_base","version":"v0","inputs":["gamma"]},
+    "chroma": {"class":"chroma_subsample_base","version":"v0","inputs":["yuv"]}
+  }
+}

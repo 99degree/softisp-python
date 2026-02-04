@@ -11,7 +11,7 @@ ALGO_ONNX = os.path.join(MODEL_DIR, "isp_algo_coeffs_full.onnx")
 RULE_ONNX = os.path.join(MODEL_DIR, "isp_rule_engine.onnx")
 ISP_ONNX  = os.path.join(MODEL_DIR, "isp_rggb_full.onnx")
 
-PROVIDERS = ["CPUExecutionProvider"]
+PROVIDERS = ["CPUExecutionProvider", "DmlExecutionProvider"]
 
 # FHD active area and stride
 HEIGHT = 1080
@@ -94,9 +94,9 @@ class PipelineStats:
         logging.info(f"Per-frame stats exported to {filename}")
 # Trunk 3: ONNX sessions factory
 def create_sessions():
-    algo_sess = ort.InferenceSession(ALGO_ONNX, providers=PROVIDERS)
-    rule_sess = ort.InferenceSession(RULE_ONNX, providers=PROVIDERS)
-    isp_sess  = ort.InferenceSession(ISP_ONNX,  providers=PROVIDERS)
+    algo_sess = ort.InferenceSession(ALGO_ONNX, providers=PROVIDERS[1])
+    rule_sess = ort.InferenceSession(RULE_ONNX, providers=PROVIDERS[1])
+    isp_sess  = ort.InferenceSession(ISP_ONNX,  providers=PROVIDERS[1])
     return algo_sess, rule_sess, isp_sess
 # Trunk 4: Strided RGGB Bayer emulation
 def emulate_rggb_bayer_10bit_strided(H, W_active, W_stride, bit_depth=BIT_DEPTH):
@@ -162,7 +162,7 @@ def camera_thread(algos_in_q, isp_in_q, house_q, stats, coeffs_to_camera_q, stop
         frame_id += 1
         time.sleep(0.01)
 # Trunk 6: Algos thread
-def algos_thread(algos_in_q, coord_in_q, algo_sess, house_q, stats, stop_event):
+def algos_thread(algos_in_q, coord_in_q, algo_sess, house_q, stats, stop_event, flags):
     while not stop_event.is_set():
         try:
             bundle = algos_in_q.get(timeout=0.1)
@@ -214,6 +214,8 @@ def algos_thread(algos_in_q, coord_in_q, algo_sess, house_q, stats, stop_event):
         drop_oldest_and_put(coord_in_q, raw)
         house_emit({"thread":"algos","event":"raw_coeffs","frame_id":frame_id}, house_q)
 
+        flags["algo_ready"] = True
+
         dur = (time.time()-arrival_ts)*1000.0
         logging.info(f"[Algos][Frame {frame_id}] Completed in {dur:.3f} ms")
         stats.record("Algos", dur)
@@ -221,7 +223,7 @@ def algos_thread(algos_in_q, coord_in_q, algo_sess, house_q, stats, stop_event):
 def coordinator_thread(coord_in_q, rule_sess, coeffs_to_camera_q, house_q, stats, stop_event, flags):
     prev = dict(IDENTITY)
     failures = 0
-    flags["algo_ready"] = False
+    #flags["algo_ready"] = False
 
     while not stop_event.is_set():
         try:
@@ -365,7 +367,7 @@ def main():
         threading.Thread(target=camera_thread, daemon=True,
                          args=(algos_in_q, isp_in_q, house_q, stats, coeffs_to_camera_q, stop_event)),
         threading.Thread(target=algos_thread, daemon=True,
-                         args=(algos_in_q, coord_in_q, algo_sess, house_q, stats, stop_event)),
+                         args=(algos_in_q, coord_in_q, algo_sess, house_q, stats, stop_event, flags)),
         threading.Thread(target=coordinator_thread, daemon=True,
                          args=(coord_in_q, rule_sess, coeffs_to_camera_q, house_q, stats, stop_event, flags)),
         threading.Thread(target=isp_thread, daemon=True,
