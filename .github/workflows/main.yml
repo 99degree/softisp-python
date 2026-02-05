@@ -1,14 +1,20 @@
 name: Build SoftISP ONNX
 
 on:
-  push:        # run on every commit
+  push:
     branches:
-      - ''
+      - main
   pull_request:
+    branches:
+      - main
+  workflow_dispatch:
 
 jobs:
   build:
     runs-on: ubuntu-latest
+    defaults:
+      run:
+        shell: bash
 
     steps:
       - name: Checkout repository
@@ -29,7 +35,8 @@ jobs:
       - name: Build ONNX models (algo + applier + coordinator)
         working-directory: softisp/onnx
         run: |
-          source ../venv/bin/activate
+          # activate the venv created at the repository root
+          source ../../venv/bin/activate
           python build_all.py --mode algo pipeline.json
           python build_all.py --mode applier pipeline.json
           python build_all.py --mode coordinator pipeline.json
@@ -37,16 +44,19 @@ jobs:
       - name: Verify ONNX models
         run: |
           source venv/bin/activate
-          python - <<'EOF'
-          import onnx, glob
-          for f in glob.glob("softisp/onnx/onnxout/softisppipeline_test/*.onnx"):
+          python - <<'PY'
+          import onnx, glob, sys
+          files = glob.glob("softisp/onnx/onnxout/softisppipeline_test/*.onnx")
+          if not files:
+              print("No ONNX files found", file=sys.stderr)
+              sys.exit(1)
+          for f in files:
               print("Checking", f)
               onnx.checker.check_model(onnx.load(f))
-          EOF
+          PY
 
       - name: Upload ONNX artifacts
         uses: actions/upload-artifact@v4
         with:
           name: softisp-pipeline-onnx
           path: softisp/onnx/onnxout/softisppipeline_test/*.onnx
-
