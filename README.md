@@ -26,7 +26,7 @@
 
 ### Quick Start
 **Requirements**  
-- Python 3.8 or newer.  
+- Python 3.12 or newer.  
 - Common packages such as `numpy`, `opencv-python`, and `onnx` listed in `requirements.txt`.
 
 **Install and run**  
