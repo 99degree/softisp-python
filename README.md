@@ -22,6 +22,9 @@
 - **Testable**: every block has unit tests and example inputs so outputs are repeatable and verifiable.  
 - **ONNX friendly**: the pipeline can be exported to ONNX for testing in other runtimes.
 
+![Pipeline graph example of demosaic](docs/onnx_onnx_out_softisp_pipeline_test_algo_demosaic.onnx.png)
+
+![algo onnx](docs/onnx_onnx_out_softisp_pipeline_test_algo.onnx.png)
 ---
 
 ### Quick Start
