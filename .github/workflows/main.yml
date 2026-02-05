@@ -47,6 +47,7 @@ jobs:
           "${{ github.workspace }}/venv/bin/python" build_all.py --mode algo pipeline.json
           "${{ github.workspace }}/venv/bin/python" build_all.py --mode applier pipeline.json
           "${{ github.workspace }}/venv/bin/python" build_all.py --mode coordinator pipeline.json
+          "${{ github.workspace }}/venv/bin/python" build_all.py --mode test_algo pipeline.json
 
       - name: Verify ONNX models
         working-directory: onnx
