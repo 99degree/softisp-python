@@ -20,6 +20,15 @@ jobs:
       - name: Checkout repository
         uses: actions/checkout@v4
 
+      - name: Debug workspace
+        if: ${{ always() }}
+        run: |
+          echo "GITHUB_WORKSPACE=${{ github.workspace }}"
+          pwd
+          ls -la
+          echo "Contents of workspace root:"
+          ls -la "${{ github.workspace }}" || true
+
       - name: Set up Python
         uses: actions/setup-python@v5
         with:
@@ -28,27 +37,25 @@ jobs:
       - name: Create virtual environment and install deps
         run: |
           python -m venv venv
-          source venv/bin/activate
-          python -m pip install --upgrade pip
-          pip install -r requirements.txt
+          "${{ github.workspace }}/venv/bin/python" -m pip install --upgrade pip
+          "${{ github.workspace }}/venv/bin/python" -m pip install -r requirements.txt
 
       - name: Build ONNX models (algo + applier + coordinator)
-        working-directory: softisp/onnx
+        working-directory: onnx
         run: |
-          # activate the venv created at the repository root
-          source ../../venv/bin/activate
-          python build_all.py --mode algo pipeline.json
-          python build_all.py --mode applier pipeline.json
-          python build_all.py --mode coordinator pipeline.json
+          # run build_all.py that lives at onnx/build_all.py using the venv Python
+          "${{ github.workspace }}/venv/bin/python" build_all.py --mode algo pipeline.json
+          "${{ github.workspace }}/venv/bin/python" build_all.py --mode applier pipeline.json
+          "${{ github.workspace }}/venv/bin/python" build_all.py --mode coordinator pipeline.json
 
       - name: Verify ONNX models
+        working-directory: onnx
         run: |
-          source venv/bin/activate
-          python - <<'PY'
+          "${{ github.workspace }}/venv/bin/python" - <<'PY'
           import onnx, glob, sys
-          files = glob.glob("softisp/onnx/onnxout/softisppipeline_test/*.onnx")
+          files = glob.glob("onnx_out/softisp_pipeline_test/*.onnx")
           if not files:
-              print("No ONNX files found", file=sys.stderr)
+              print("No ONNX files found in onnx/onnx_out/softisp_pipeline_test", file=sys.stderr)
               sys.exit(1)
           for f in files:
               print("Checking", f)
@@ -59,4 +66,4 @@ jobs:
         uses: actions/upload-artifact@v4
         with:
           name: softisp-pipeline-onnx
-          path: softisp/onnx/onnxout/softisppipeline_test/*.onnx
+          path: onnx/onnx_out/softisp_pipeline_test/*.onnx
