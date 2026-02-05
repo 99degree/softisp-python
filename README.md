@@ -1,3 +1,4 @@
+  [![Build SoftISP ONNX](https://github.com/geobang/softisp/actions/workflows/main.yml/badge.svg)](https://github.com/geobang/softisp/actions/workflows/main.yml)
 ### Project Overview
 **SoftISP** is a simple, open software image signal processor. It converts raw camera sensor data into clean, color-correct images using readable, modular code. The goal is to make image processing easy to understand, test, and extend for developers, researchers, and hobbyists.
 
@@ -51,20 +52,23 @@ python test_full_pipeline.py --model_dir onnx_out/softisp_pipeline_test
 
 ### Roadmap
 **Short term**  
-- Stabilize core stages and add basic unit tests.  
+- Stabilize core stages and add basic unit tests.  (done)
 - Provide 2 to 5 example raw images and expected outputs.
 
 **Medium term**  
-- Improve accuracy and add more test data(done).  
-- Add simple performance improvements and a demo script(done).
+- Improve accuracy and add more test data (done).  
+- Add simple performance improvements and a demo script (done).
 
 **Long term**  
 - Add auto exposure and auto white balance tuning(done).  
 - Build a small web demo or GUI for non technical users.
 
 **Status**
-- Had a complete and simple pipeline(awb,blacklevel,demosaic,ccm,gamma)
+- Had a complete and simple pipeline(awb,blacklevel,demosaic,ccm,gamma) (done)
+- Action builds applier/algo/coordinator onnx for test/analysis (done)
+- Harness test script to applier/algo/coordinator (done)
 
+  https://github.com/geobang/softisp/blob/main/onnx/test_full_pipeline.py
 ---
 
 ### Contributing and License
