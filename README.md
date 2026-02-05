@@ -79,7 +79,7 @@ python test_full_pipeline.py --model_dir onnx_out/softisp_pipeline_test
 - Use clear commit messages.
 
 **License**  
-- The project uses a permissive license such as MIT or Apache 2.0 so others can reuse the code.
+- The project uses a permissive license such as GPLv2 so others can reuse the code.
 
 ---
 
