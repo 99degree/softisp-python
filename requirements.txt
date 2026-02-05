@@ -1,4 +1,4 @@
 onnx
-onnxruntime
-numpy
+onnxruntime>=1.23.2
+numpy>=2.4.2
 protobuf
