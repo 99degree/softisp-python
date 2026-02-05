@@ -49,16 +49,4 @@ jobs:
         with:
           name: softisp-pipeline-onnx
           path: softisp/onnx/onnxout/softisppipeline_test/*.onnx
-`
 
----
-
-What changed
-- Added python build_all.py --mode coordinator pipeline.json to the build step.  
-- Everything else (validation, artifact upload) stays the same.  
-
----
-
-This way, every commit will now build algo, applier, and coordinator ONNX models, validate them, and upload them as artifacts.  
-
-Would you like me to also add a separate job for coordinator (so failures in coordinator don’t block algo/applier builds), or keep them all in one job as above?
