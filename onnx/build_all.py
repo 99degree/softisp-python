@@ -63,7 +63,6 @@ def log_graph_names(nodes, inits, vis, inputs, outputs):
         check_and_log(o.name, "graph_output")
 
 
-# Helper to find existing ValueInfoProto by name and extract (elem_type, dims)
 def _find_value_info_by_name(name: str, vis_list):
     """
     Return (elem_type, dims) from a ValueInfoProto in vis_list matching name,
@@ -127,7 +126,7 @@ def save_model(nodes, inits, vis, graph_inputs, result_outputs,
         ir_version=11,
     )
 
-    # Attach function protos (they are expected to be sanitized already by microblocks)
+    # Attach function protos (they are expected to be sanitized inside the FunctionProto)
     if all_function_defs:
         model.functions.extend(all_function_defs)
 
@@ -194,7 +193,7 @@ def build_all(manifest_file: str, mode: str = "applier", debug_outputs: bool = F
             print(f"[INFO] Skipping stage '{stage_name}' — {mode} not implemented")
             continue
 
-        # store the microblock instance with the result for later per-stage sanitization
+        # keep result and microblock for later promotion checks
         stage_results.append((stage_name, spec, result, mb))
 
         print(f"Top-level call node: {[getattr(n, 'op_type', '') for n in result.nodes]}")
@@ -206,51 +205,50 @@ def build_all(manifest_file: str, mode: str = "applier", debug_outputs: bool = F
         if bad:
             raise RuntimeError(f"Output naming violation in stage {stage_name}: {bad}")
 
-        # If this stage produced a FunctionProto (production encapsulation), result.nodes contains the call node.
-        # Inline internals only when there is no FunctionProto or when debug mode is requested.
+        # Inline internals for debug or when no FunctionProto was produced.
+        # Otherwise collect call node and function proto for later processing.
         if result.func is None or result.debug:
             nodes.extend(result._ref_nodes)
             inits.extend(result._ref_inits)
             vis.extend(result._ref_vis)
         else:
-            # append the call node(s) to the top-level graph (the function call)
-            nodes.extend(result.nodes)
+            # collect the FunctionProto for later attachment
+            if result.func is not None:
+                all_function_defs.append(result.func)
+            # collect call node(s) in result.nodes but defer final syncing/append until after optional sanitization
+            # (we will append call nodes to `nodes` in a dedicated step below, after optional sanitize_for_stage)
+            # keep them out of nodes for now to allow sanitization to run first if present
+            pass
 
         # For debug mode, promote inputs with value_info
         if result.debug:
             for inp in result.inputs.values():
-                # prefer existing ValueInfo if present in vis or graph_inputs, otherwise use explicit metadata
                 found = _find_value_info_by_name(inp["name"], vis + graph_inputs)
                 if found is not None:
                     elem_type, dims = found
                     graph_inputs.append(oh.make_tensor_value_info(inp["name"], elem_type, dims))
                     logging.debug(f"[DEBUG PROMOTE] Using existing ValueInfo for debug input '{inp['name']}' type={elem_type} shape={dims}")
                 else:
-                    # require explicit metadata in debug mode
                     if "type" not in inp or "shape" not in inp:
                         raise RuntimeError(f"Missing metadata for debug input '{inp['name']}' (type/shape)")
                     graph_inputs.append(oh.make_tensor_value_info(inp["name"], inp["type"], inp["shape"]))
             inits.extend(result._ref_inits)
             vis.extend(result._ref_vis)
 
-    # 1. List function value_info names for all stage results (diagnostic)
-    for entry in stage_results:
-        _, _, r, _ = entry
+    # Diagnostics
+    for _, _, r, _ in stage_results:
         if r.func is not None:
             logging.debug(f"[DIAG] func {r.func.name} value_info: {[vi.name for vi in r.func.value_info]}")
 
-    # 2. Show whether result.inputs already has type/shape
     for _, _, r, _ in stage_results:
         for n, inp in r.inputs.items():
             logging.debug(f"[DIAG] result.inputs[{n}] keys={list(inp.keys()) if isinstance(inp, dict) else type(inp)}")
 
-    # 3. Show vis names present at promotion time
     logging.debug("[DIAG] vis names before promotion: %s", [vi.name for vi in vis])
 
     # === Promote dangling inputs (reuse existing ValueInfo if available) ===
     produced_outputs = {meta["name"] for _, _, r, _ in stage_results for meta in r.outputs.values()}
 
-    # build a combined search list of existing value_info and graph_inputs
     existing_vis = list(vis) + list(graph_inputs) + [
         vi for _, _, r, _ in stage_results if r.func is not None for vi in r.func.value_info
     ]
@@ -261,22 +259,16 @@ def build_all(manifest_file: str, mode: str = "applier", debug_outputs: bool = F
             name = inp["name"]
             if name in produced_outputs:
                 continue
-
-            # 1) prefer an existing ValueInfoProto (from vis or graph_inputs)
             found = _find_value_info_by_name(name, existing_vis)
             if found is not None:
                 elem_type, dims = found
                 graph_inputs.append(oh.make_tensor_value_info(name, elem_type, dims))
                 logging.debug(f"[PROMOTE] Promoted input '{name}' using existing ValueInfo type={elem_type} shape={dims}")
                 continue
-
-            # 2) fall back to explicit metadata on the stage result (if present)
             if "type" in inp and "shape" in inp:
                 graph_inputs.append(oh.make_tensor_value_info(name, inp["type"], inp["shape"]))
                 logging.debug(f"[PROMOTE] Promoted input '{name}' using stage metadata type={inp['type']} shape={inp['shape']}")
                 continue
-
-            # 3) nothing found — record and fail later
             missing_meta.append(name)
 
     if missing_meta:
@@ -285,11 +277,66 @@ def build_all(manifest_file: str, mode: str = "applier", debug_outputs: bool = F
             + "\n  ".join(missing_meta)
         )
 
-    # === Promote dangling outputs ===
+    # === Optional per-stage sanitization (if BuildResult provides it) ===
+    # If BuildResult implements sanitize_for_stage(stage, stage_class, node_output_names, promoted_output_names),
+    # call it now so the FunctionProto internals are adjusted before we append call nodes.
+    # We compute a preliminary node_output_names from currently inlined nodes (debug/inlined ones).
+    prelim_node_output_names = {out for n in nodes for out in getattr(n, "output", [])}
+    prelim_promoted_output_names = set()  # none yet
+    for stage_name, spec, result, mb in stage_results:
+        if getattr(result, "func", None) is None or result.debug:
+            continue
+        sanitize_fn = getattr(result, "sanitize_for_stage", None)
+        if callable(sanitize_fn):
+            logging.debug(f"[SANITIZE] Calling sanitize_for_stage for {stage_name}")
+            try:
+                # sanitizer returns rename_map or mutates result.func in-place
+                result.sanitize_for_stage(stage_name, spec["class"], prelim_node_output_names, prelim_promoted_output_names)
+            except Exception as e:
+                logging.warning(f"[SANITIZE] sanitize_for_stage failed for {stage_name}: {e}")
+
+    # === Append call nodes (synchronized to sanitized function signatures) ===
+    # Ensure call nodes match function signatures and append them to nodes so their outputs are visible.
+    for stage_name, spec, result, mb in stage_results:
+        if getattr(result, "func", None) is None or result.debug:
+            # already inlined or no function
+            continue
+
+        # Ensure call node exists
+        if getattr(result, "call", None) is None:
+            logging.debug(f"[WARN] No call node for stage {stage_name}; skipping call append")
+            continue
+
+        # Sync call node signature to function signature (important if sanitizer changed func)
+        try:
+            # inputs
+            del result.call.input[:]
+            result.call.input.extend(result.func.input)
+            # outputs
+            del result.call.output[:]
+            result.call.output.extend(result.func.output)
+        except Exception as e:
+            logging.warning(f"[SYNC] Failed to sync call node for {stage_name}: {e}")
+
+        # Append call node(s) to top-level nodes (avoid duplicates)
+        # Use simple identity check by op_type + outputs to avoid duplicate append
+        already = False
+        for n in nodes:
+            if getattr(n, "op_type", None) == getattr(result.call, "op_type", None) and list(n.output) == list(result.call.output):
+                already = True
+                break
+        if not already:
+            nodes.append(result.call)
+
+    # After appending call nodes, collect all FunctionProto defs for attachment (they were collected earlier)
+    # all_function_defs already contains result.func for each non-debug function result (collected above)
+
+    # === Promote dangling outputs (stage-declared outputs) ===
+    # Now that call nodes are present, compute node_output_names and promote any stage-declared output
+    # that is not consumed downstream. This includes outputs produced by call nodes.
+    node_output_names = {out for n in nodes for out in getattr(n, "output", [])}
     consumed_inputs = {inp["name"] for _, _, r, _ in stage_results for inp in r.inputs.values()}
     logging.debug(f"[DEBUG] Consumed inputs: {list(consumed_inputs)}")
-
-    node_output_names = {out for n in nodes for out in getattr(n, "output", [])}
 
     if debug_outputs:
         print("\n=== Debug mode: promoting all outputs from all stages ===")
@@ -300,43 +347,54 @@ def build_all(manifest_file: str, mode: str = "applier", debug_outputs: bool = F
         for _, _, r, _ in stage_results:
             for meta in r.outputs.values():
                 out_name = meta["name"]
-                if out_name not in consumed_inputs:
-                    # Only promote if not already a node output (we will reference node outputs directly)
-                    if out_name not in node_output_names:
-                        promoted_outputs[out_name] = meta
-                        logging.debug(f"[PROMOTE] {out_name} promoted to graph output")
-                    else:
-                        logging.debug(f"[SKIP] {out_name} skipped (already node output)")
-                else:
+                if out_name in consumed_inputs:
                     logging.debug(f"[SKIP] {out_name} skipped (consumed downstream)")
+                    continue
+                # Promote any stage-declared output that is not consumed downstream.
+                # This includes outputs that are already produced by top-level nodes (call nodes).
+                promoted_outputs[out_name] = meta
+                logging.debug(f"[PROMOTE] {out_name} promoted to graph output (declared by stage)")
 
-    print(f"\nPromoted outputs: {list(promoted_outputs.keys())}")
+    logging.debug(f"\nPromoted outputs (pre-function-check): {list(promoted_outputs.keys())}")
 
     # === Filter value_info to avoid SSA duplicates ===
     promoted_output_names = set(promoted_outputs.keys())
     vis = [v for v in vis if v.name not in node_output_names and v.name not in promoted_output_names]
     logging.debug(f"[FILTER] value_info after cleanup: {[v.name for v in vis]}")
 
-    # === Per-stage sanitization and function attachment ===
-    # Now that node_output_names and promoted_outputs are known, ask each microblock
-    # to sanitize/prepare its FunctionProto (or inline its nodes in debug mode).
+    # === Promote any remaining function outputs that are not covered yet ===
+    # (This is a safety net: if a FunctionProto declares outputs that were not in stage outputs,
+    #  promote them if they are dangling and not consumed.)
     node_output_names = {out for n in nodes for out in getattr(n, "output", [])}
-    promoted_output_names = set(promoted_outputs.keys())
+    consumed_inputs = {inp["name"] for _, _, r, _ in stage_results for inp in r.inputs.values()}
 
-    for stage_name, spec, result, mb in stage_results:
-        prep = mb.sanitize_and_prepare_function(stage_name, spec["class"], result,
-                                                node_output_names, promoted_output_names)
-        if prep["mode"] == "inline":
-            # inline nodes (debug mode)
-            nodes.extend(prep["nodes"])
-            inits.extend(prep["inits"])
-            vis.extend(prep["vis"])
-        elif prep["mode"] == "function":
-            # attach sanitized FunctionProto (internal nodes renamed and internal bridges inserted)
-            all_function_defs.append(prep["func"])
-        else:
-            # nothing to do for this stage
-            pass
+    for func in all_function_defs:
+        for out_name in list(func.output):
+            if out_name in promoted_outputs:
+                continue
+            if out_name in node_output_names:
+                # already produced by a top-level node (call node) — but if the stage didn't declare it, still promote if dangling
+                if out_name in consumed_inputs:
+                    continue
+                # promote it (use function.value_info if available)
+                found = _find_value_info_by_name(out_name, func.value_info)
+                if found is not None:
+                    elem_type, dims = found
+                    promoted_outputs[out_name] = {"name": out_name, "type": elem_type, "shape": dims}
+                    logging.debug(f"[PROMOTE-FUNC] Promoting function output '{out_name}' using function value_info type={elem_type} shape={dims}")
+                else:
+                    promoted_outputs[out_name] = {"name": out_name, "type": TensorProto.FLOAT, "shape": ["N", "C", "H", "W"]}
+                    logging.debug(f"[PROMOTE-FUNC] Promoting function output '{out_name}' with default type/shape")
+            else:
+                # not produced by any top-level node — cannot promote because save_model expects node outputs
+                logging.debug(f"[PROMOTE-FUNC] Skipping function output '{out_name}' (no top-level producer)")
+
+    logging.debug(f"\nPromoted outputs (final): {list(promoted_outputs.keys())}")
+
+    # Final filter of vis
+    promoted_output_names = set(promoted_outputs.keys())
+    vis = [v for v in vis if v.name not in node_output_names and v.name not in promoted_output_names]
+    logging.debug(f"[FILTER] value_info after final cleanup: {[v.name for v in vis]}")
 
     out_path = os.path.join("onnx_out", manifest["canonical_name"], f"{mode}.onnx")
     save_model(nodes, inits, vis, graph_inputs,
@@ -352,3 +410,4 @@ if __name__ == "__main__":
     parser.add_argument("--debug-outputs", action="store_true", help="promote all outputs for debugging")
     args = parser.parse_args()
     build_all(args.manifest, args.mode, args.debug_outputs)
+
