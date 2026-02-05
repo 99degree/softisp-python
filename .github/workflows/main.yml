@@ -1,0 +1,64 @@
+name: Build SoftISP ONNX
+
+on:
+  push:        # run on every commit
+    branches:
+      - ''
+  pull_request:
+
+jobs:
+  build:
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: '3.11'
+
+      - name: Create virtual environment and install deps
+        run: |
+          python -m venv venv
+          source venv/bin/activate
+          python -m pip install --upgrade pip
+          pip install -r requirements.txt
+
+      - name: Build ONNX models (algo + applier + coordinator)
+        working-directory: softisp/onnx
+        run: |
+          source ../venv/bin/activate
+          python build_all.py --mode algo pipeline.json
+          python build_all.py --mode applier pipeline.json
+          python build_all.py --mode coordinator pipeline.json
+
+      - name: Verify ONNX models
+        run: |
+          source venv/bin/activate
+          python - <<'EOF'
+          import onnx, glob
+          for f in glob.glob("softisp/onnx/onnxout/softisppipeline_test/*.onnx"):
+              print("Checking", f)
+              onnx.checker.check_model(onnx.load(f))
+          EOF
+
+      - name: Upload ONNX artifacts
+        uses: actions/upload-artifact@v4
+        with:
+          name: softisp-pipeline-onnx
+          path: softisp/onnx/onnxout/softisppipeline_test/*.onnx
+`
+
+---
+
+What changed
+- Added python build_all.py --mode coordinator pipeline.json to the build step.  
+- Everything else (validation, artifact upload) stays the same.  
+
+---
+
+This way, every commit will now build algo, applier, and coordinator ONNX models, validate them, and upload them as artifacts.  
+
+Would you like me to also add a separate job for coordinator (so failures in coordinator don’t block algo/applier builds), or keep them all in one job as above?
