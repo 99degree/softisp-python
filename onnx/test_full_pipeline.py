@@ -274,7 +274,7 @@ def main():
     TEST_ALGO_ONNX = os.path.join(MODEL_DIR, "test_algo.onnx")
     ALGO_ONNX      = os.path.join(MODEL_DIR, "algo.onnx")
     ISP_ONNX       = os.path.join(MODEL_DIR, "applier.onnx")
-
+    '''
     # Sessions with robust error logging
     try:
         logging.info(f"[Main] load test_algo: {TEST_ALGO_ONNX}")
@@ -283,6 +283,8 @@ def main():
     except Exception as e:
         logging.exception(f"[Main] failed to create test_algo session: {e}")
         return
+    '''
+    test_algo_sess = None
 
     try:
         logging.info(f"[Main] load algo: {ALGO_ONNX}")
