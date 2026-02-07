@@ -84,29 +84,45 @@ class DemosaicMHC(DemosaicBase):
             oh.make_node("Add",    [G0_full, G1_full], [G_full_native], name=f"{stage}_sum_G_native"),
         ]
 
-        # 3) Tile one-hot CFA → masks
+        # 3) Upsample one-hot CFA → masks using Resize (nearest) so masks match plane size exactly
         M_stack = f"{stage}.mask_stack"
         M_R, M_G0, M_G1, M_B, M_G = [f"{stage}.{n}" for n in ("M_R","M_G0","M_G1","M_B","M_G")]
 
-        # IMPORTANT: repeats must have same length as input rank (cfa_onehot is [N, H_tile, W_tile, 4] → rank 4)
-        # Use neutral repeats to satisfy shape inference; upstream should provide already tiled or set concrete repeats later.
-        tile_repeats_name, tile_repeats_init = _tile_repeats_init(stage, repeats=[1, 1, 1, 1])
-        inits.append(tile_repeats_init)
-
-        # Slice masks along the LAST axis (channel=4), not axis=2
-        (sMR,eMR,aMR),     inits_mR  = _slice_inputs_1d(stage, "mask_R",  starts=[0], ends=[1], axes=[3])
-        (sMG0,eMG0,aMG0),  inits_mG0 = _slice_inputs_1d(stage, "mask_G0", starts=[1], ends=[2], axes=[3])
-        (sMG1,eMG1,aMG1),  inits_mG1 = _slice_inputs_1d(stage, "mask_G1", starts=[2], ends=[3], axes=[3])
-        (sMB,eMB,aMB),     inits_mB  = _slice_inputs_1d(stage, "mask_B",  starts=[3], ends=[4], axes=[3])
+        # slice indices for channels (after Resize the channel axis is 1 for NCHW)
+        (sMR,eMR,aMR),     inits_mR  = _slice_inputs_1d(stage, "mask_R",  starts=[0], ends=[1], axes=[1])
+        (sMG0,eMG0,aMG0),  inits_mG0 = _slice_inputs_1d(stage, "mask_G0", starts=[1], ends=[2], axes=[1])
+        (sMG1,eMG1,aMG1),  inits_mG1 = _slice_inputs_1d(stage, "mask_G1", starts=[2], ends=[3], axes=[1])
+        (sMB,eMB,aMB),     inits_mB  = _slice_inputs_1d(stage, "mask_B",  starts=[3], ends=[4], axes=[1])
         inits += inits_mR + inits_mG0 + inits_mG1 + inits_mB
 
+        # If cfa_onehot is NHWC (N,Ht,Wt,4), transpose it to NCHW first:
+        # cfa_onehot_nchw = f"{stage}.cfa_onehot_nchw"
+        # nodes += [ oh.make_node("Transpose", [cfa_onehot], [cfa_onehot_nchw], perm=[0,3,1,2], name=f"{stage}_transpose_onehot") ]
+        # use cfa_onehot_nchw below if you uncomment the transpose
+
+        # Reuse the same scales initializer used for plane Resize (ensure name matches)
+        # We create a dedicated roi/scales for masks to avoid name collisions
+        roi_masks = oh.make_tensor(f"{stage}.roi_empty_masks", TensorProto.FLOAT, [0], [])
+        scales_masks = oh.make_tensor(f"{stage}.scales_masks", TensorProto.FLOAT, [4], [1.0, 1.0, 2.0, 2.0])
+        inits += [roi_masks, scales_masks]
+
+        # Upsample one-hot to full resolution with nearest neighbor so one-hot values remain integer-like
         nodes += [
-            oh.make_node("Tile",  [cfa_onehot, tile_repeats_name], [M_stack], name=f"{stage}_tile_cfa_onehot"),
-            oh.make_node("Slice", [M_stack, sMR,  eMR,  aMR],  [M_R],  name=f"{stage}_mask_R"),
-            oh.make_node("Slice", [M_stack, sMG0, eMG0, aMG0], [M_G0], name=f"{stage}_mask_G0"),
-            oh.make_node("Slice", [M_stack, sMG1, eMG1, aMG1], [M_G1], name=f"{stage}_mask_G1"),
-            oh.make_node("Slice", [M_stack, sMB,  eMB,  aMB],  [M_B],  name=f"{stage}_mask_B"),
-            oh.make_node("Add",   [M_G0, M_G1], [M_G], name=f"{stage}_mask_G"),
+                oh.make_node(
+                        "Resize",
+                        [cfa_onehot, f"{stage}.roi_empty_masks", f"{stage}.scales_masks"],
+                        [M_stack],
+                        name=f"{stage}_resize_onehot",
+                        mode="nearest",
+                        coordinate_transformation_mode="asymmetric",
+                        nearest_mode="floor"
+                ),
+                # slice channels into per-channel masks
+                oh.make_node("Slice", [M_stack, sMR,  eMR,  aMR],  [M_R],  name=f"{stage}_mask_R"),
+                oh.make_node("Slice", [M_stack, sMG0, eMG0, aMG0], [M_G0], name=f"{stage}_mask_G0"),
+                oh.make_node("Slice", [M_stack, sMG1, eMG1, aMG1], [M_G1], name=f"{stage}_mask_G1"),
+                oh.make_node("Slice", [M_stack, sMB,  eMB,  aMB],  [M_B],  name=f"{stage}_mask_B"),
+                oh.make_node("Add",   [M_G0, M_G1], [M_G], name=f"{stage}_mask_G"),
         ]
 
         # 4) Kernel initializers
@@ -198,7 +214,7 @@ class DemosaicMHC(DemosaicBase):
 
         vis += [
             oh.make_tensor_value_info(cfa4,       TensorProto.FLOAT, ["n",4,"h","w"]),
-            oh.make_tensor_value_info(cfa_onehot, TensorProto.INT64, [1,2,2,4]),
+            oh.make_tensor_value_info(cfa_onehot, TensorProto.FLOAT, [1,2,2,4]),
             oh.make_tensor_value_info(out,        TensorProto.FLOAT, ["n",3,"h","w"]),
         ]
 
