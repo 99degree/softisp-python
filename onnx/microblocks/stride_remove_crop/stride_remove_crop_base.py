@@ -10,9 +10,10 @@ class CropWidthFixedBase(MicroblockBase):
     name = "stride_remove_crop"
     version = "v0"
 
-    def __init__(self, fixed_width: int = 128):
+    def __init__(self, fixed_width: int = 1920, dim = 4):
         super().__init__()
         self.fixed_width = fixed_width
+        self.dim = dim
 
     def build_applier(self, stage: str, prev_stages=None):
         upstream = prev_stages[0] if prev_stages else stage
@@ -40,11 +41,11 @@ class CropWidthFixedBase(MicroblockBase):
         inits = [starts_const, ends_const, axes_const]
 
         vis = [
-            oh.make_tensor_value_info(input_image, TensorProto.FLOAT, ["n", 4, "H", "w"]),
-            oh.make_tensor_value_info(out_name,    TensorProto.FLOAT, ["n", 4, "H", "W"]),
+            oh.make_tensor_value_info(input_image, TensorProto.FLOAT, ["n", self.dim, "H", "w"]),
+            oh.make_tensor_value_info(out_name,    TensorProto.FLOAT, ["n", self.dim, "H", "W"]),
         ]
 
-        outputs = {"applier": {"name": out_name, "type": TensorProto.FLOAT, "shape":["n", 4, "H", "W"] }}
+        outputs = {"applier": {"name": out_name, "type": TensorProto.FLOAT, "shape":["n", self.dim, "H", "W"] }}
 
         return BuildResult(outputs, [slice_node], inits, vis) \
             .appendInput(input_image, type=TensorProto.FLOAT)
@@ -55,3 +56,12 @@ class CropWidthFixedBase(MicroblockBase):
     def build_test_algo(self, stage: str, prev_stages=None):
         # For testing, reuse applier logic
         return super().build_test_algo(stage, prev_stages)
+
+
+class CropWidth3CH(CropWidthFixedBase):
+    dim = 3
+    name = "stride_remove_crop"
+    version = "v1"
+
+    def __init__(self, fixed_width: int = 1920, dim: int = 3):
+        super().__init__(fixed_width=fixed_width, dim=dim)
