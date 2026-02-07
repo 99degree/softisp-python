@@ -13,6 +13,9 @@ class ImageDescBase(MicroblockBase):
     version = 'v0'
     input_format = TensorProto.INT16
 
+    def build_coordinator(self, stage: str, prev_stages=None):
+        return super().build_coordinator(stage, prev_stage)
+
     def build_applier(self, stage: str, prev_stages=None):
         image_in  = f'{stage}.input.image'
         width_in  = f'{stage}.input.width'
