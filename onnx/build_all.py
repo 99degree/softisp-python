@@ -295,6 +295,13 @@ def build_all(manifest_file: str, mode: str = "applier", debug_outputs: bool = F
             except Exception as e:
                 logging.warning(f"[SANITIZE] sanitize_for_stage failed for {stage_name}: {e}")
 
+    # debug: show inner_io_info if present
+    for stage_name, spec, result, mb in stage_results:
+        if getattr(result, "func", None) is not None and hasattr(result, "inner_io_info"):
+            logging.debug(f"[INNER-IO] Stage {stage_name} inner_io_info keys: {list(result.inner_io_info.keys())}")
+            for k, v in result.inner_io_info.items():
+                logging.debug(f"[INNER-IO] {stage_name} {k} -> type={v.get('type')} shape={v.get('shape')}")
+
     # === Append call nodes (synchronized to sanitized function signatures) ===
     # Ensure call nodes match function signatures and append them to nodes so their outputs are visible.
     for stage_name, spec, result, mb in stage_results:
@@ -338,6 +345,12 @@ def build_all(manifest_file: str, mode: str = "applier", debug_outputs: bool = F
     consumed_inputs = {inp["name"] for _, _, r, _ in stage_results for inp in r.inputs.values()}
     logging.debug(f"[DEBUG] Consumed inputs: {list(consumed_inputs)}")
 
+    # Build a lookup from output name -> BuildResult so we can prefer inner_io_info when promoting
+    output_to_result = {}
+    for stage_name, spec, result, mb in stage_results:
+        for meta in result.outputs.values():
+            output_to_result[meta["name"]] = result
+
     if debug_outputs:
         print("\n=== Debug mode: promoting all outputs from all stages ===")
         promoted_outputs = {meta["name"]: meta for _, _, r, _ in stage_results for meta in r.outputs.values()}
@@ -350,10 +363,21 @@ def build_all(manifest_file: str, mode: str = "applier", debug_outputs: bool = F
                 if out_name in consumed_inputs:
                     logging.debug(f"[SKIP] {out_name} skipped (consumed downstream)")
                     continue
-                # Promote any stage-declared output that is not consumed downstream.
-                # This includes outputs that are already produced by top-level nodes (call nodes).
-                promoted_outputs[out_name] = meta
-                logging.debug(f"[PROMOTE] {out_name} promoted to graph output (declared by stage)")
+
+                # Prefer authoritative inner IO info from BuildResult if available
+                chosen_meta = meta
+                res = output_to_result.get(out_name)
+                if res is not None:
+                    info = getattr(res, "inner_io_info", {}).get(out_name)
+                    if info:
+                        chosen_meta = {"name": out_name, "type": info["type"], "shape": info["shape"]}
+                        logging.debug(f"[PROMOTE] {out_name} promoted using inner_io_info type={info['type']} shape={info['shape']}")
+                    else:
+                        logging.debug(f"[PROMOTE] {out_name} promoted using stage metadata (no inner_io_info)")
+                else:
+                    logging.debug(f"[PROMOTE] {out_name} promoted using stage metadata (no BuildResult)")
+
+                promoted_outputs[out_name] = chosen_meta
 
     logging.debug(f"\nPromoted outputs (pre-function-check): {list(promoted_outputs.keys())}")
 
@@ -410,4 +434,3 @@ if __name__ == "__main__":
     parser.add_argument("--debug-outputs", action="store_true", help="promote all outputs for debugging")
     args = parser.parse_args()
     build_all(args.manifest, args.mode, args.debug_outputs)
-

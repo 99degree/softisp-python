@@ -17,6 +17,10 @@ class BuildResult:
     Sanitization for FunctionProto internals is implemented as a method on
     BuildResult: sanitize_for_stage(...). This method mutates self.func to a
     sanitized copy and returns a rename_map mapping original_inner_name -> sanitized_name.
+
+    New: BuildResult stores `inner_io_info` mapping original inner IO names
+    -> {"type": elem_type, "shape": dims} so callers (e.g., build_all.py)
+    can use authoritative inner tensor metadata when promoting outputs.
     """
 
     def __init__(self, outputs=None, nodes=None, inits=None, vis=None,
@@ -41,6 +45,10 @@ class BuildResult:
         self.inputs = {}
         self.outputs = {}
         self.vis = []
+
+        # New: authoritative inner IO metadata mapping
+        # keys are original inner names (as authored), values are dict {"type": elem_type, "shape": dims}
+        self.inner_io_info = {}
 
         self._regenerate_internal()
 
@@ -271,6 +279,8 @@ class BuildResult:
         - Insert identity bridge nodes inside the function body:
               original_inner_input -> sanitized_internal (if input was renamed)
               sanitized_internal -> original_inner_output (if output was renamed)
+        - Ensure function signature value_info reflects the actual inner node types/dims when available.
+        - Populate self.inner_io_info mapping original inner names -> {"type": elem_type, "shape": dims}
         - Replace self.func with the sanitized FunctionProto.
         - Return rename_map mapping original_inner_name -> sanitized_internal_name.
         """
@@ -299,7 +309,7 @@ class BuildResult:
                 if inp in rename_map:
                     node.input[i] = rename_map[inp]
 
-        # 2) Update value_info entries if present
+        # 2) Update value_info entries if present (rename those that refer to internal names)
         new_value_info = []
         for vi in list(f_copy.value_info):
             vi_copy = onnx.ValueInfoProto()
@@ -344,10 +354,119 @@ class BuildResult:
         f_copy.node.extend(other_nodes)
         f_copy.node.extend(bridge_out_nodes)
 
+        # 4) Ensure function signature value_info reflects inner node types/dims when available.
+        # Build a lookup of available internal ValueInfoProto entries:
+        # prefer f_copy.value_info (already renamed) and then the BuildResult's _ref_vis.
+        internal_vis = {vi.name: vi for vi in list(f_copy.value_info)}
+        for vi in self._ref_vis:
+            if vi.name not in internal_vis:
+                internal_vis[vi.name] = vi
+
+        # Helper: extract (elem_type, dims) from a ValueInfoProto
+        def _vi_to_type_shape(vi_proto):
+            if vi_proto is None:
+                return None
+            if not vi_proto.type.HasField("tensor_type"):
+                return None
+            tt = vi_proto.type.tensor_type
+            elem_type = tt.elem_type
+            dims = []
+            for d in tt.shape.dim:
+                if d.HasField("dim_value"):
+                    dims.append(d.dim_value)
+                elif d.HasField("dim_param"):
+                    dims.append(d.dim_param)
+                else:
+                    dims.append(None)
+            return elem_type, dims
+
+        # Build new signature value_info list: for each original function input/output,
+        # prefer internal_vis entry for the internal name (post-rename), then fall back
+        # to existing metadata from self._ref_inputs/_ref_outputs or existing f_copy.value_info.
+        sig_value_info = []
+
+        # Reset inner_io_info mapping
+        self.inner_io_info = {}
+
+        # Inputs
+        for orig_in in orig_inputs:
+            internal_name = rename_map.get(orig_in, orig_in)
+            vi_internal = internal_vis.get(internal_name)
+            ts = _vi_to_type_shape(vi_internal)
+            if ts is not None:
+                elem_type, dims = ts
+                sig_value_info.append(oh.make_tensor_value_info(orig_in, elem_type, dims))
+                # store authoritative inner info keyed by original inner name
+                self.inner_io_info[orig_in] = {"type": elem_type, "shape": dims}
+            else:
+                # fallback: use metadata from _ref_inputs if available
+                meta = self._ref_inputs.get(orig_in)
+                if meta and "type" in meta and "shape" in meta:
+                    sig_value_info.append(oh.make_tensor_value_info(orig_in, meta["type"], meta["shape"]))
+                    self.inner_io_info[orig_in] = {"type": meta["type"], "shape": meta["shape"]}
+                else:
+                    # last resort: keep any existing value_info in f_copy that matches orig_in (if present)
+                    found = None
+                    for vi in list(f_copy.value_info):
+                        if vi.name == orig_in:
+                            found = vi
+                            break
+                    if found is not None:
+                        sig_value_info.append(found)
+                        ts2 = _vi_to_type_shape(found)
+                        if ts2:
+                            self.inner_io_info[orig_in] = {"type": ts2[0], "shape": ts2[1]}
+                        else:
+                            self.inner_io_info[orig_in] = {"type": TensorProto.FLOAT, "shape": ["N", "C", "H", "W"]}
+                    else:
+                        # unknown: create a generic float tensor with dynamic dims
+                        sig_value_info.append(oh.make_tensor_value_info(orig_in, TensorProto.FLOAT, ["N", "C", "H", "W"]))
+                        self.inner_io_info[orig_in] = {"type": TensorProto.FLOAT, "shape": ["N", "C", "H", "W"]}
+
+        # Outputs
+        for orig_out in orig_outputs:
+            internal_name = rename_map.get(orig_out, orig_out)
+            vi_internal = internal_vis.get(internal_name)
+            ts = _vi_to_type_shape(vi_internal)
+            if ts is not None:
+                elem_type, dims = ts
+                sig_value_info.append(oh.make_tensor_value_info(orig_out, elem_type, dims))
+                self.inner_io_info[orig_out] = {"type": elem_type, "shape": dims}
+            else:
+                # fallback: use metadata from _ref_outputs if available
+                meta = self._ref_outputs.get(orig_out)
+                if meta and "type" in meta and "shape" in meta:
+                    sig_value_info.append(oh.make_tensor_value_info(orig_out, meta["type"], meta["shape"]))
+                    self.inner_io_info[orig_out] = {"type": meta["type"], "shape": meta["shape"]}
+                else:
+                    # last resort: keep any existing value_info in f_copy that matches orig_out (if present)
+                    found = None
+                    for vi in list(f_copy.value_info):
+                        if vi.name == orig_out:
+                            found = vi
+                            break
+                    if found is not None:
+                        sig_value_info.append(found)
+                        ts2 = _vi_to_type_shape(found)
+                        if ts2:
+                            self.inner_io_info[orig_out] = {"type": ts2[0], "shape": ts2[1]}
+                        else:
+                            self.inner_io_info[orig_out] = {"type": TensorProto.FLOAT, "shape": ["N", "C", "H", "W"]}
+                    else:
+                        sig_value_info.append(oh.make_tensor_value_info(orig_out, TensorProto.FLOAT, ["N", "C", "H", "W"]))
+                        self.inner_io_info[orig_out] = {"type": TensorProto.FLOAT, "shape": ["N", "C", "H", "W"]}
+
+        # Replace function.value_info with signature value_info plus any remaining internal value_info
+        remaining_internal_vis = [vi for name, vi in internal_vis.items() if name not in set(orig_inputs + orig_outputs)]
+        del f_copy.value_info[:]
+        f_copy.value_info.extend(sig_value_info)
+        f_copy.value_info.extend(remaining_internal_vis)
+
         # Replace self.func with sanitized copy
         self.func = f_copy
 
-        logging.debug(f"[SANITIZE] Stage {stage}: renamed {len(rename_map)} internal names")
+        logging.debug(f"[SANITIZE] Stage {stage}: renamed {len(rename_map)} internal names; updated signature value_info")
+        logging.debug(f"[SANITIZE] Stage {stage}: inner_io_info keys = {list(self.inner_io_info.keys())}")
         return rename_map
 
 
