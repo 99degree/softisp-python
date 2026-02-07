@@ -75,9 +75,9 @@ class Bayer2CFABase(MicroblockBase):
         tile = self.CFA_ONEHOT[self.pattern]
         flat = [v for row in tile for vec in row for v in vec]
         const_name = f"{stage}.cfa_onehot_const"
-        init = oh.make_tensor(const_name, TensorProto.INT64, [1,2,2,4], flat)
+        init = oh.make_tensor(const_name, TensorProto.FLOAT, [1,2,2,4], flat)
         # add batch dimension 'n' to value info
-        vis = oh.make_tensor_value_info(const_name, TensorProto.INT64, ["n",2,2,4])
+        vis = oh.make_tensor_value_info(const_name, TensorProto.FLOAT, ["n",2,2,4])
         return const_name, init, vis
 
     def build_applier(self, stage, prev_stages=None):
@@ -129,12 +129,12 @@ class Bayer2CFABase(MicroblockBase):
             oh.make_tensor_value_info(input_image, TensorProto.FLOAT, ["n",1,"h","w"]),
             oh.make_tensor_value_info(out_name,    TensorProto.FLOAT, ["n",4,"h","w"]),
             cfa_const_vis,
-            oh.make_tensor_value_info(cfa_out_name, TensorProto.INT64, ['n',2,2,4]),
+            oh.make_tensor_value_info(cfa_out_name, TensorProto.FLOAT, ['n',2,2,4]),
         ]
 
         outputs = {
             "applier":   {"name": out_name, "shape": ['n',4,"h","w"], "type": oh.TensorProto.FLOAT},
-            "cfa_onehot":{"name": cfa_out_name, "shape": ['n',2,2,4], "type": oh.TensorProto.INT64},
+            "cfa_onehot":{"name": cfa_out_name, "shape": ['n',2,2,4], "type": oh.TensorProto.FLOAT},
         }
 
         result = BuildResult(outputs, nodes, [cfa_const_init], vis)
