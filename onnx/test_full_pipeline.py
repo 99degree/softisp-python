@@ -74,11 +74,15 @@ def debug_session_io(sess: ort.InferenceSession, outs=None, title=""):
             logging.info(f"{name}: shape={getattr(arr,'shape',None)}, dtype={getattr(arr,'dtype',None)}")
 
 def map_outs_to_named_dict(output_meta, outs):
+    if output_meta is None:
+       return None;
     d = {meta.name: arr for meta, arr in zip(output_meta, outs)}
     logging.debug(f"[map_outs] keys={list(d.keys())}")
     return d
 
 def filter_feed_for_inputs(feed_dict, input_meta):
+    if feed_dict is None:
+       return None
     names = [meta.name for meta in input_meta]
     filtered = {name: feed_dict[name] for name in names if name in feed_dict}
     logging.debug(f"[filter_feed] in={len(feed_dict)} kept={list(filtered.keys())}")
@@ -133,7 +137,7 @@ def generate_bar_bayer(width=64, frame_id=0,
 # -------------------------------
 # Threads
 # -------------------------------
-def camera_thread(cam_to_algo_q, cam_to_coord_q, stop_event,
+def camera_thread(cam_to_algo_q, cam_to_coord_q, isp_in_q, stop_event,
                   mode="synthetic", test_algo_sess=None,
                   width=64, wb_gains=(1.0,1.0,1.0),
                   ccm=np.eye(3, dtype=np.float32)):
@@ -141,7 +145,23 @@ def camera_thread(cam_to_algo_q, cam_to_coord_q, stop_event,
     frame_id = 0
     wb = list(wb_gains)
     offset = 0.1
+
+    # Simple backpressure parameters
+    isp_threshold = max(1, Q_MAX - 1)   # if isp_in_q reaches this, camera will back off
+    sleep_on_full = 0.01                # sleep duration when ISP queue is full (seconds)
+
     while not stop_event.is_set():
+        # If ISP queue is saturated, back off at source
+        if isp_in_q.qsize() >= isp_threshold:
+            logging.debug("[Camera] isp_in_q full (size=%d); sleeping %.3fs", isp_in_q.qsize(), sleep_on_full)
+            time.sleep(sleep_on_full)
+            continue
+
+        if cam_to_coord_q.qsize() >= isp_threshold:
+            logging.debug("[Camera] cam_to_coord_q full (size=%d); sleeping %.3fs", cam_to_coord_q.qsize(), sleep_on_full)
+            time.sleep(sleep_on_full)
+            continue
+
         start = time.perf_counter()
         try:
             if mode == "onnx" and test_algo_sess is not None:
@@ -152,7 +172,8 @@ def camera_thread(cam_to_algo_q, cam_to_coord_q, stop_event,
             else:
                 wb = [min(max(g+0.001,0.8),1.2) for g in wb]
                 offset += 0.001
-                if offset > 0.2: offset = 0.1
+                if offset > 0.2:
+                    offset = 0.1
                 outs_dict = generate_bar_bayer(width=width, frame_id=frame_id,
                                                wb_gains=tuple(wb), ccm=ccm,
                                                offset=offset)
@@ -160,17 +181,20 @@ def camera_thread(cam_to_algo_q, cam_to_coord_q, stop_event,
                 drop_oldest_and_put(cam_to_coord_q, outs_dict, qname="cam→coord")
         except Exception as e:
             logging.exception(f"[Camera][Frame {frame_id}] failed: {e}")
+
         frame_id += 1
         time.sleep(0.01)
         end = time.perf_counter()
         thread_stats["camera"].append(end-start)
         thread_counts["camera"] += 1
+
     logging.info("[Camera] stop")
 
 def algos_thread(cam_to_algo_q, algo_to_coord_q, stop_event,
                  test_algo_sess, algo_sess):
     logging.info("[Algos] start")
-    test_out_meta = test_algo_sess.get_outputs()
+    if test_algo_sess is not None:
+        test_out_meta = test_algo_sess.get_outputs()
     algo_in_meta = algo_sess.get_inputs()
     while not stop_event.is_set():
         start = time.perf_counter()
@@ -201,7 +225,8 @@ def algos_thread(cam_to_algo_q, algo_to_coord_q, stop_event,
 def coordinator_thread(cam_to_coord_q, algo_to_coord_q, isp_in_q,
                        stop_event, test_algo_sess, algo_sess):
     logging.info("[Coord] start")
-    test_out_meta = test_algo_sess.get_outputs()
+    if test_algo_sess is not None:
+        test_out_meta = test_algo_sess.get_outputs()
     algo_out_meta = algo_sess.get_outputs()
     while not stop_event.is_set():
         start = time.perf_counter()
@@ -313,7 +338,7 @@ def main():
     # Threads (non‑daemon so they keep process alive)
     threads = [
         threading.Thread(name="Camera", target=camera_thread,
-                         args=(cam_to_algo_q, cam_to_coord_q, stop_event,
+                         args=(cam_to_algo_q, cam_to_coord_q, isp_in_q, stop_event,
                                args.mode, test_algo_sess, args.width)),
         threading.Thread(name="Algos", target=algos_thread,
                          args=(cam_to_algo_q, algo_to_coord_q, stop_event,
