@@ -163,17 +163,40 @@ class WBAvgV1(AWBBase):
         wb_gain_exp = f"{stage}.wb_gains_expanded"
         applier     = f"{stage}.applier"
 
-        # Shape of input image
+        # 1) Shape of input image
         nodes.append(oh.make_node("Shape", [input_image], [shape_name], name=f"{stage}_shape"))
 
-        # Expand gains to match image shape
-        nodes.append(oh.make_node("Expand", [wb_gain_in, shape_name], [wb_gain_exp], name=f"{stage}_expand_gains"))
+        # 2) Gather N, C, H, W from shape_name
+        # create small index constants
+        inits.append(oh.make_tensor(f"{stage}.idx_n", TensorProto.INT64, [1], [0]))
+        inits.append(oh.make_tensor(f"{stage}.idx_c", TensorProto.INT64, [1], [1]))
+        inits.append(oh.make_tensor(f"{stage}.idx_h", TensorProto.INT64, [1], [2]))
+        inits.append(oh.make_tensor(f"{stage}.idx_w", TensorProto.INT64, [1], [3]))
 
-        # Multiply
+        tgt_n = f"{stage}.tgt_n"
+        tgt_c = f"{stage}.tgt_c"
+        tgt_h = f"{stage}.tgt_h"
+        tgt_w = f"{stage}.tgt_w"
+
+        nodes.append(oh.make_node("Gather", [shape_name, f"{stage}.idx_n"], [tgt_n], axis=0, name=f"{stage}_gather_n"))
+        nodes.append(oh.make_node("Gather", [shape_name, f"{stage}.idx_c"], [tgt_c], axis=0, name=f"{stage}_gather_c"))
+        nodes.append(oh.make_node("Gather", [shape_name, f"{stage}.idx_h"], [tgt_h], axis=0, name=f"{stage}_gather_h"))
+        nodes.append(oh.make_node("Gather", [shape_name, f"{stage}.idx_w"], [tgt_w], axis=0, name=f"{stage}_gather_w"))
+
+        # 3) Concat [N, C, H, W] -> explicit INT64 shape vector for Expand
+        tgt_shape_dyn = f"{stage}.wb_expand_shape_dyn"
+        nodes.append(oh.make_node("Concat", [tgt_n, tgt_c, tgt_h, tgt_w], [tgt_shape_dyn], axis=0, name=f"{stage}_concat_expand_shape"))
+
+        # 4) Expand gains to match image shape using the explicit dynamic shape vector
+        nodes.append(oh.make_node("Expand", [wb_gain_in, tgt_shape_dyn], [wb_gain_exp], name=f"{stage}_expand_gains"))
+
+        # 5) Multiply
         nodes.append(oh.make_node("Mul", [input_image, wb_gain_exp], [applier], name=f"{stage}_wb_gain"))
 
+        # 6) Value info for checker and downstream inference
         vis += [
             oh.make_tensor_value_info(input_image, TensorProto.FLOAT, ["N", 3, "H", "W"]),
+            oh.make_tensor_value_info(shape_name, TensorProto.INT64, [4]),
             oh.make_tensor_value_info(wb_gain_in,  TensorProto.FLOAT, [1, 3, 1, 1]),
             oh.make_tensor_value_info(wb_gain_exp, TensorProto.FLOAT, ["N", 3, "H", "W"]),
             oh.make_tensor_value_info(applier,     TensorProto.FLOAT, ["N", 3, "H", "W"]),
