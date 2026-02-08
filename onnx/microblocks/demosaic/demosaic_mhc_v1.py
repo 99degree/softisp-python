@@ -66,10 +66,13 @@ def add_safe_mul(nodes: list, inits: list, stage: str, A: str, B: str, out: str)
     nodes.append(oh.make_node("Mul", [A, f"{stage}.{B}_matched"], [out], name=f"{stage}_mul_safe_{A}_{B}"))
 
 
-class DemosaicMHC(DemosaicBase):
+class DemosaicMHCV1(DemosaicBase):
     name = "demosaic_mhc"
     version = "v1"
     provides = ["applier"]
+
+    def build_coordinator(self, stage, prev_stages=None):
+        return super().build_coordinator(stage, prev_stages)
 
     def build_algo(self, stage, prev_stages=None):
         return super().build_algo(stage, prev_stages)

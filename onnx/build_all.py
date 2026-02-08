@@ -187,6 +187,8 @@ def build_all(manifest_file: str, mode: str = "applier", debug_outputs: bool = F
                 result = mb.get_build_algo(stage_name, prev_stages=spec.get("inputs", []))
             elif mode == "test_algo":
                 result = mb.get_build_test_algo(stage_name, prev_stages=spec.get("inputs", []))
+            elif mode == "coordinator":
+                result = mb.get_build_coordinator(stage_name, prev_stages=spec.get("inputs", []))
             else:
                 raise ValueError(f"Unknown mode: {mode}")
         except NotImplementedError:
