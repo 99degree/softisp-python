@@ -29,6 +29,9 @@ class DemosaicBase(MicroblockBase):
     version = "v0"
     provides = ["applier"]
 
+    def __init__(self, version: str = "v0"):
+        self.version = version
+
     def build_algo(self, stage: str, prev_stages=None):
         upstream = prev_stages[0] if prev_stages else stage
         cfa4 = f"{upstream}.applier"   # [n,4,h/2,w/2]

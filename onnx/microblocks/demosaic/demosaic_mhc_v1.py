@@ -71,6 +71,9 @@ class DemosaicMHCV1(DemosaicBase):
     version = "v1"
     provides = ["applier"]
 
+    def __init__(self, version: str = "v1"):
+        super().__init__(version=version)
+
     def build_coordinator(self, stage, prev_stages=None):
         return super().build_coordinator(stage, prev_stages)
 
