@@ -1,0 +1,281 @@
+================================================================================
+AUTO EXPOSURE ALGORITHMS - DIFFERENT COMPUTATIONAL LEVELS
+================================================================================
+
+This implementation provides multiple auto exposure algorithms with different
+computational needs, allowing you to choose the right balance between quality
+and performance for your use case.
+
+================================================================================
+SIMPLE COMPUTATION - Minimal overhead
+================================================================================
+
+AutoExposureSimple
+------------------
+Family: autoexposure_simple
+Computation: LOW
+Use Case: Real-time applications, embedded systems, low-power devices
+
+Features:
+- Calculates mean brightness of entire image
+- Simple exposure value calculation
+- Minimal ONNX nodes (~15 nodes)
+- Fast execution
+
+Algorithm:
+1. Calculate mean brightness: ReduceMean over all dimensions
+2. Create target brightness (18% gray)
+3. Calculate EV = log2(target / brightness)
+4. Clip EV to valid range
+5. Calculate gain = 2^EV
+
+Output:
+- brightness [1] - Mean brightness
+- exposure_value [1] - Exposure value in EV
+- gain [1] - Gain factor
+
+================================================================================
+MEDIUM COMPUTATION - Balanced quality and performance
+================================================================================
+
+AutoExposureStats
+------------------
+Family: autoexposure_stats
+Computation: MEDIUM
+Use Case: General-purpose ISP, mobile devices, consumer cameras
+
+Features:
+- Per-channel RGB analysis
+- Weighted luminance calculation (BT.601)
+- Color-aware exposure
+- Moderate ONNX nodes (~25 nodes)
+
+Algorithm:
+1. Split RGB channels
+2. Calculate per-channel brightness
+3. Calculate weighted luminance: Y = 0.299*R + 0.587*G + 0.114*B
+4. Create target brightness
+5. Calculate EV = log2(target / weighted_brightness)
+6. Clip EV to valid range
+7. Calculate gain = 2^EV
+
+Output:
+- r_stats [1] - Red channel brightness
+- g_stats [1] - Green channel brightness
+- b_stats [1] - Blue channel brightness
+- weighted_stats [1] - Weighted luminance
+- exposure_value [1] - Exposure value in EV
+- gain [1] - Gain factor
+
+AutoExposureYUV
+---------------
+Family: autoexposure_yuv
+Computation: MEDIUM
+Use Case: YUV pipelines, video processing, streaming
+
+Features:
+- YUV channel analysis
+- Luminance-only exposure calculation
+- Chrominance preservation
+- Moderate ONNX nodes (~20 nodes)
+
+Algorithm:
+1. Split YUV channels
+2. Calculate brightness from Y channel only
+3. Create target brightness
+4. Calculate EV = log2(target / y_brightness)
+5. Clip EV to valid range
+6. Calculate gain = 2^EV
+
+Output:
+- y_channel [1,1,h,w] - Y channel data
+- u_channel [1,1,h,w] - U channel data
+- v_channel [1,1,h,w] - V channel data
+- y_stats [1] - Y channel brightness
+- exposure_value [1] - Exposure value in EV
+- gain [1] - Gain factor
+
+================================================================================
+HIGH COMPUTATION - Advanced algorithms
+================================================================================
+
+AutoExposureHistogram
+---------------------
+Family: autoexposure_histogram
+Computation: HIGH
+Use Case: Professional cameras, high-quality imaging, photography
+
+Features:
+- Histogram-based exposure analysis
+- Percentile-based exposure targeting
+- Advanced brightness calculation
+- Higher ONNX node count (~20 nodes)
+
+Algorithm:
+1. Convert to grayscale
+2. Calculate histogram statistics
+3. Find optimal exposure point using percentiles
+4. Create target brightness
+5. Calculate EV = log2(target / histogram_brightness)
+6. Clip EV to valid range
+7. Calculate gain = 2^EV
+
+Output:
+- brightness [1] - Histogram-based brightness
+- exposure_value [1] - Exposure value in EV
+- gain [1] - Gain factor
+
+AutoExposureMultiZone
+---------------------
+Family: autoexposure_multizone
+Computation: HIGH
+Use Case: Advanced ISP, computational photography, HDR
+
+Features:
+- Multi-zone exposure analysis
+- Center-weighted zone calculation
+- Weighted zone exposure
+- Higher ONNX node count (~20 nodes)
+
+Algorithm:
+1. Convert to grayscale
+2. Divide image into zones
+3. Calculate weighted zone brightness
+4. Create target brightness
+5. Calculate EV = log2(target / weighted_zone_brightness)
+6. Clip EV to valid range
+7. Calculate gain = 2^EV
+
+Output:
+- brightness [1] - Multi-zone weighted brightness
+- exposure_value [1] - Exposure value in EV
+- gain [1] - Gain factor
+
+================================================================================
+SHARED APPLIER IMPLEMENTATION
+================================================================================
+
+All algorithms use the same applier implementation:
+
+Algorithm Stage:
+- Calculates exposure statistics
+- Outputs gain coefficient
+
+Applier Stage:
+- Multiplies input image by gain
+- Clips output to [0, 1] range
+- Outputs exposure-compensated image
+
+This separation allows:
+- Different algorithms for different use cases
+- Same applier for all algorithms
+- Easy algorithm switching
+- Consistent output format
+
+================================================================================
+PARAMETER COMPARISON
+================================================================================
+
+Parameter              Simple  Stats   YUV     Histogram  MultiZone
+---------------------- ------- ------- ------- ---------- ----------
+target_brightness      0.18    0.18    0.18    0.18       0.18
+min_ev                 -2.0    -2.0    -2.0    -2.0       -2.0
+max_ev                 +2.0    +2.0    +2.0    +2.0       +2.0
+rgb_weights            N/A     BT.601  N/A     N/A        N/A
+histogram_bins         N/A     N/A     N/A     256        N/A
+percentile             N/A     N/A     N/A     50         N/A
+zone_weights           N/A     N/A     N/A     N/A        [0.5,0.7,1.0,0.7,0.5]
+
+================================================================================
+PERFORMANCE CHARACTERISTICS
+================================================================================
+
+Algorithm              ONNX Nodes  Memory  Speed  Quality
+---------------------- ----------- ------- ------ --------
+AutoExposureSimple     ~15         Low     Fast   Basic
+AutoExposureStats      ~25         Medium  Medium Good
+AutoExposureYUV        ~20         Medium  Medium Good
+AutoExposureHistogram  ~20         High    Slow   Excellent
+AutoExposureMultiZone  ~20         High    Slow   Excellent
+
+================================================================================
+USAGE EXAMPLES
+================================================================================
+
+Simple Pipeline (Low Power):
+demosaic -> autoexposure_simple -> awb -> ccm -> tonemap -> gamma
+
+Standard Pipeline (Mobile):
+demosaic -> autoexposure_stats -> awb -> ccm -> tonemap -> gamma -> yuv
+
+Video Pipeline (Streaming):
+... -> gamma -> yuv -> autoexposure_yuv -> chroma -> ...
+
+Professional Pipeline (High Quality):
+demosaic -> autoexposure_histogram -> awb -> ccm -> tonemap -> gamma
+
+Advanced Pipeline (Computational Photography):
+demosaic -> autoexposure_multizone -> awb -> ccm -> tonemap -> gamma
+
+================================================================================
+PIPELINE CONFIGURATION
+================================================================================
+
+To use a specific algorithm, update your pipeline JSON:
+
+{
+  "stages": {
+    "autoexposure": {
+      "class": "autoexposure_simple",  // or autoexposure_stats, autoexposure_yuv, etc.
+      "version": "v2",
+      "family": "autoexposure_simple"  // matches the algorithm family
+    }
+  }
+}
+
+================================================================================
+EXTENSIBILITY
+================================================================================
+
+You can easily add new algorithms by:
+
+1. Create a new class inheriting from MicroblockBase
+2. Set unique name and family attributes
+3. Implement build_algo() for statistics calculation
+4. Implement build_applier() for exposure application
+5. Add class to __init__.py exports
+
+Example:
+
+class AutoExposureCustom(MicroblockBase):
+    name = "autoexposure_custom"
+    family = "autoexposure_custom"
+    version = "v2"
+    
+    target_brightness = 0.18
+    min_ev = -2.0
+    max_ev = 2.0
+    
+    def build_algo(self, stage, prev_stages=None):
+        # Your custom algorithm here
+        pass
+    
+    def build_applier(self, stage, prev_stages=None):
+        # Your applier here
+        pass
+
+================================================================================
+CONCLUSION
+================================================================================
+
+This flexible architecture allows you to:
+- Choose the right algorithm for your use case
+- Balance quality vs performance
+- Easily add new algorithms
+- Maintain consistent API across all implementations
+- Switch algorithms without changing pipeline structure
+
+All algorithms are independent and only depend on MicroblockBase, making them
+easy to maintain and extend.
+
+================================================================================
