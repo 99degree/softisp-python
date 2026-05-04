@@ -5,8 +5,8 @@ LCS DISPLACEMENT MAP MICROBLOCK - IMPLEMENTATION COMPLETE ✅
 STATUS: ALL TESTS PASSED - PRODUCTION READY
 
 Based on the LSC displacement map PDF documentation, this implementation
-provides displacement map-based lens shading correction with geometric
-distortion correction capabilities.
+provides displacement map-based lens shading correction using standard LCS
+coefficients and VCM to form the polynomial.
 
 ================================================================================
 IMPLEMENTATION SUMMARY
@@ -26,18 +26,24 @@ ALGORITHMS CREATED
    - GridSample-based geometric transformation
 
 2. LensLCSDisplacementV1 (family: lens_lcs_displacement_v1)
-   - Displacement map generation from radial parameters
-   - 6-parameter model: [cx, cy, k1, k2, k3, vcm]
-   - Full radial displacement model
+   - Displacement map generation from standard LCS coefficients
+   - Standard parameters: lsc_coeffs [k1, k2] + vcm
+   - Standard LCS polynomial model
 
 3. LensLCSDisplacementV2 (family: lens_lcs_displacement_v2)
-   - Approximated displacement map for efficiency
-   - 4-parameter model: [k1, k2, vcm, strength]
-   - Simplified displacement model
+   - Extended displacement map generation
+   - Extended parameters: lsc_coeffs [k1, k2, k3] + vcm
+   - Extended LCS polynomial model
 
 ================================================================================
 KEY FEATURES
 ================================================================================
+
+✅ Standard LCS Parameters
+   - Uses standard LCS coefficients (k1, k2, k3)
+   - Uses VCM (vignetting correction multiplier)
+   - Forms polynomial from standard coefficients
+   - Compatible with existing LCS calibration data
 
 ✅ Independent Classes
    - Each algorithm only depends on MicroblockBase
@@ -100,11 +106,12 @@ GridSample Parameters:
 
 LensLCSDisplacementV1
 ---------------------
-Purpose: Displacement map generation from radial parameters
+Purpose: Displacement map generation from standard LCS coefficients
 
 Inputs:
 - applier [n,3,h,w] : Image tensor from upstream
-- lsc_params [6] : [cx, cy, k1, k2, k3, vcm] radial parameters
+- lsc_coeffs [2] : [k1, k2] standard LCS coefficients
+- vcm [1] : Vignetting correction multiplier
 
 Outputs:
 - applier [n,3,h,w] : Corrected image tensor
@@ -112,41 +119,39 @@ Outputs:
 - lsc_gain [h,w] : Generated gain factors
 
 Algorithm:
-1. Split parameters: cx, cy, k1, k2, k3, vcm
+1. Split LCS coefficients: k1, k2
 2. Create coordinate grids (normalized to [-1, 1])
-3. Calculate displacement from center:
-   - dx_center = x - cx
-   - dy_center = y - cy
-4. Calculate radius squared: r^2 = dx_center^2 + dy_center^2
-5. Calculate polynomial terms:
+3. Calculate radius squared: r^2 = x^2 + y^2
+4. Calculate polynomial terms (standard LCS model):
    - k1*r^2
    - k2*r^4
-   - k3*r^6
-6. Calculate scale: scale = 1 + k1*r^2 + k2*r^4 + k3*r^6 + vcm
-7. Calculate displacement vectors:
-   - dx = dx_center * (scale - 1)
-   - dy = dy_center * (scale - 1)
-8. Stack into displacement map [h,w,2]
-9. LSC gain = scale
-10. Apply GridSample for geometric transformation
-11. Apply gain correction
+5. Calculate scale: scale = k1*r^2 + k2*r^4 + vcm
+6. Calculate displacement vectors:
+   - dx = x * (scale - 1)
+   - dy = y * (scale - 1)
+7. Stack into displacement map [h,w,2]
+8. LSC gain = scale
+9. Apply GridSample for geometric transformation
+10. Apply gain correction
 
-Radial Displacement Model:
-  r^2 = (x-cx)^2 + (y-cy)^2
-  scale = 1 + k1*r^2 + k2*r^4 + k3*r^6 + vcm
-  dx = (x-cx) * (scale - 1)
-  dy = (y-cy) * (scale - 1)
+Standard LCS Polynomial Model:
+  r^2 = x^2 + y^2
+  poly_term = k1*r^2 + k2*r^4
+  scale = poly_term + vcm
+  dx = x * (scale - 1)
+  dy = y * (scale - 1)
   gain = scale
 
-Use Case: Full radial displacement correction with center offset
+Use Case: Standard LCS displacement correction with 2 coefficients
 
 LensLCSDisplacementV2
 ---------------------
-Purpose: Approximated displacement map for efficiency
+Purpose: Extended displacement map generation
 
 Inputs:
 - applier [n,3,h,w] : Image tensor from upstream
-- lsc_params [4] : [k1, k2, vcm, strength] simplified parameters
+- lsc_coeffs [3] : [k1, k2, k3] extended LCS coefficients
+- vcm [1] : Vignetting correction multiplier
 
 Outputs:
 - applier [n,3,h,w] : Corrected image tensor
@@ -154,31 +159,60 @@ Outputs:
 - lsc_gain [h,w] : Generated gain factors
 
 Algorithm:
-1. Split parameters: k1, k2, vcm, strength
+1. Split LCS coefficients: k1, k2, k3
 2. Create coordinate grids (normalized to [-1, 1])
 3. Calculate radius squared: r^2 = x^2 + y^2
-4. Calculate polynomial terms:
+4. Calculate polynomial terms (extended LCS model):
    - k1*r^2
    - k2*r^4
-5. Calculate scale: scale = 1 + k1*r^2 + k2*r^4 + vcm
-6. Calculate displacement factor:
-   - displacement_factor = strength * (scale - 1)
-7. Calculate displacement vectors:
-   - dx = x * displacement_factor
-   - dy = y * displacement_factor
-8. Stack into displacement map [h,w,2]
-9. LSC gain = scale
-10. Apply GridSample for geometric transformation
-11. Apply gain correction
+   - k3*r^6
+5. Calculate scale: scale = k1*r^2 + k2*r^4 + k3*r^6 + vcm
+6. Calculate displacement vectors:
+   - dx = x * (scale - 1)
+   - dy = y * (scale - 1)
+7. Stack into displacement map [h,w,2]
+8. LSC gain = scale
+9. Apply GridSample for geometric transformation
+10. Apply gain correction
 
-Approximated Displacement Model:
+Extended LCS Polynomial Model:
   r^2 = x^2 + y^2
-  scale = 1 + k1*r^2 + k2*r^4 + vcm
-  dx = x * strength * (scale - 1)
-  dy = y * strength * (scale - 1)
+  poly_term = k1*r^2 + k2*r^4 + k3*r^6
+  scale = poly_term + vcm
+  dx = x * (scale - 1)
+  dy = y * (scale - 1)
   gain = scale
 
-Use Case: Efficient displacement correction with strength control
+Use Case: Extended LCS displacement correction with 3 coefficients
+
+================================================================================
+STANDARD LCS PARAMETERS
+================================================================================
+
+What are Standard LCS Parameters?
+----------------------------------
+Standard LCS parameters are the coefficients used in traditional lens shading
+correction to model vignetting and radial gain patterns.
+
+Parameters:
+- k1: First-order radial coefficient
+- k2: Second-order radial coefficient
+- k3: Third-order radial coefficient (optional)
+- vcm: Vignetting correction multiplier
+
+Polynomial Model:
+  scale = k1*r^2 + k2*r^4 + k3*r^6 + vcm
+
+Where:
+- r^2 = x^2 + y^2 (normalized coordinates)
+- scale: Per-pixel gain factor
+- vcm: Base vignetting correction
+
+Typical Values:
+- k1: 0.01 to 0.1 (first-order vignetting)
+- k2: -0.0001 to -0.001 (second-order correction)
+- k3: 0.000001 to 0.00001 (third-order correction)
+- vcm: 0.0 to 10.0 (vignetting strength)
 
 ================================================================================
 TEST RESULTS
@@ -239,7 +273,7 @@ Base Pipeline (External Displacement Map):
   }
 }
 
-V1 Pipeline (Radial Displacement):
+V1 Pipeline (Standard LCS Parameters):
 {
   "stages": {
     "lcs": {
@@ -251,7 +285,7 @@ V1 Pipeline (Radial Displacement):
   }
 }
 
-V2 Pipeline (Approximated Displacement):
+V2 Pipeline (Extended LCS Parameters):
 {
   "stages": {
     "lcs": {
@@ -321,34 +355,37 @@ Output:
 - output: [n, c, h_out, w_out] - Transformed image
 
 ================================================================================
-DISPLACEMENT MODELS
+STANDARD LCS POLYNOMIAL MODELS
 ================================================================================
 
-V1: Full Radial Model
-----------------------
+V1: Standard Model (2 coefficients)
+------------------------------------
 Parameters:
-- cx: Center x offset
-- cy: Center y offset
-- k1: First-order radial coefficient
-- k2: Second-order radial coefficient
-- k3: Third-order radial coefficient
+- lsc_coeffs: [k1, k2]
 - vcm: Vignetting correction multiplier
 
-Typical Values:
-- Barrel distortion: k1 > 0, k2 < 0, k3 > 0
-- Pincushion distortion: k1 < 0, k2 > 0, k3 < 0
+Polynomial:
+  scale = k1*r^2 + k2*r^4 + vcm
 
-V2: Approximated Model
------------------------
+Typical Values:
+- k1: 0.01 (first-order vignetting)
+- k2: -0.0001 (second-order correction)
+- vcm: 5.0 (vignetting strength)
+
+V2: Extended Model (3 coefficients)
+------------------------------------
 Parameters:
-- k1: First-order radial coefficient
-- k2: Second-order radial coefficient
+- lsc_coeffs: [k1, k2, k3]
 - vcm: Vignetting correction multiplier
-- strength: Displacement strength multiplier
+
+Polynomial:
+  scale = k1*r^2 + k2*r^4 + k3*r^6 + vcm
 
 Typical Values:
-- strength: 0.0 to 1.0 (controls displacement magnitude)
-- k1, k2: Same as radial model
+- k1: 0.01 (first-order vignetting)
+- k2: -0.0001 (second-order correction)
+- k3: 0.000001 (third-order correction)
+- vcm: 5.0 (vignetting strength)
 
 ================================================================================
 COMPARISON WITH OTHER LCS IMPLEMENTATIONS
@@ -379,16 +416,16 @@ LensLCSDisplacementBase:
 - Use Case: Complex geometric + gain correction
 
 LensLCSDisplacementV1:
-- Purpose: Radial displacement correction
-- Method: Radial displacement generation + GridSample
+- Purpose: Standard LCS displacement correction
+- Method: Standard LCS polynomial + GridSample
 - Complexity: High
-- Use Case: Radial geometric + gain correction
+- Use Case: Standard LCS with geometric correction
 
 LensLCSDisplacementV2:
-- Purpose: Approximated displacement correction
-- Method: Simplified displacement generation + GridSample
-- Complexity: Medium-High
-- Use Case: Efficient geometric + gain correction
+- Purpose: Extended LCS displacement correction
+- Method: Extended LCS polynomial + GridSample
+- Complexity: High
+- Use Case: Extended LCS with geometric correction
 
 ================================================================================
 PERFORMANCE CONSIDERATIONS
@@ -403,7 +440,7 @@ V1 Complexity:
 - Space: O(h * w * 2) - displacement map storage
 
 V2 Complexity:
-- Time: O(h * w) - simplified polynomial per pixel
+- Time: O(h * w) - extended polynomial per pixel
 - Space: O(h * w * 2) - displacement map storage
 
 Optimization Tips:
@@ -427,6 +464,7 @@ class LensLCSDisplacementV3(MicroblockBase):
     
     def build_algo(self, stage, prev_stages=None):
         # Your displacement map generation here
+        # Use standard LCS coefficients and VCM
         pass
     
     def build_applier(self, stage, prev_stages=None):
@@ -461,14 +499,17 @@ CONCLUSION
 ✅ Proper ISP architecture pattern
 ✅ GridSample-based geometric transformation
 ✅ Combined geometric and gain correction
+✅ Uses standard LCS coefficients and VCM
+✅ Compatible with existing LCS calibration data
 ✅ Easy to extend with new algorithms
 
 The implementation provides a flexible, extensible architecture for
-displacement map-based lens shading correction that can be used in different
-pipeline configurations based on correction complexity and performance needs.
+displacement map-based lens shading correction that uses standard LCS
+coefficients and VCM to form the polynomial, making it compatible with
+existing LCS calibration data and workflows.
 
 This implementation follows the principles outlined in the LSC displacement
 map PDF documentation, providing accurate geometric and gain correction for
-complex lens distortions.
+complex lens distortions using standard LCS parameters.
 
 ================================================================================

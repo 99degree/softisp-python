@@ -125,11 +125,12 @@ class LensLCSDisplacementV1(MicroblockBase):
     """
     LensLCSDisplacementV1 (v1)
     ---------------------------
-    Displacement map generation from radial parameters.
+    Displacement map generation from standard LCS coefficients and VCM.
 
     Needs:
         - applier [n,3,h,w] : image tensor from upstream
-        - lsc_params [6]    : [cx, cy, k1, k2, k3, vcm] radial parameters
+        - lsc_coeffs [2]    : [k1, k2] standard LCS coefficients
+        - vcm [1]           : Vignetting correction multiplier
 
     Provides:
         - applier [n,3,h,w] : corrected image tensor
@@ -137,14 +138,15 @@ class LensLCSDisplacementV1(MicroblockBase):
         - lsc_gain [h,w] : generated gain factors
 
     Behavior:
-        - build_algo: generates displacement_map and lsc_gain from radial parameters
+        - build_algo: generates displacement_map and lsc_gain from standard LCS params
         - build_applier: applies displacement-based correction
 
-    Displacement Model:
-        r^2 = (x-cx)^2 + (y-cy)^2
-        scale = 1 + k1*r^2 + k2*r^4 + k3*r^6 + vcm
-        dx = (x-cx) * (scale - 1)
-        dy = (y-cy) * (scale - 1)
+    Standard LCS Polynomial Model:
+        r^2 = x^2 + y^2
+        poly_term = k1*r^2 + k2*r^4
+        scale = poly_term + vcm
+        dx = x * (scale - 1)
+        dy = y * (scale - 1)
         gain = scale
     """
     name = 'lens_lcs_displacement_v1'
@@ -153,17 +155,18 @@ class LensLCSDisplacementV1(MicroblockBase):
 
     def build_algo(self, stage: str, prev_stages=None):
         """
-        Generate displacement_map and lsc_gain from radial parameters.
+        Generate displacement_map and lsc_gain from standard LCS coefficients and VCM.
         """
         vis, nodes, inits = ([], [], [])
         upstream = prev_stages[0] if prev_stages else stage
         input_image = f"{upstream}.applier"
-        lsc_params = f'{stage}.lsc_params'
+        lsc_coeffs = f'{stage}.lsc_coeffs'
+        vcm = f'{stage}.vcm'
         
-        # Split parameters: cx, cy, k1, k2, k3, vcm
-        cx, cy, k1, k2, k3, vcm = [f'{stage}.{p}' for p in ('cx', 'cy', 'k1', 'k2', 'k3', 'vcm')]
-        nodes.append(oh.make_node('Split', inputs=[lsc_params], outputs=[cx, cy, k1, k2, k3, vcm],
-                                  name=f'{stage}.split_params', axis=0))
+        # Split LCS coefficients: k1, k2
+        k1, k2 = [f'{stage}.{p}' for p in ('k1', 'k2')]
+        nodes.append(oh.make_node('Split', inputs=[lsc_coeffs], outputs=[k1, k2],
+                                  name=f'{stage}.split_coeffs', axis=0))
         
         # Create coordinate grids (normalized to [-1, 1])
         h_coord = f'{stage}.h_coord'
@@ -184,54 +187,34 @@ class LensLCSDisplacementV1(MicroblockBase):
         nodes.append(oh.make_node('Mul', inputs=[w_coord, w_half], outputs=[w_norm],
                                   name=f'{stage}.mul_w_norm'))
         
-        # Calculate displacement from center
-        dx_center = f'{stage}.dx_center'
-        dy_center = f'{stage}.dy_center'
-        nodes.append(oh.make_node('Sub', inputs=[w_norm, cx], outputs=[dx_center],
-                                  name=f'{stage}.sub_dx'))
-        nodes.append(oh.make_node('Sub', inputs=[h_norm, cy], outputs=[dy_center],
-                                  name=f'{stage}.sub_dy'))
-        
         # Calculate radius squared
-        dx2 = f'{stage}.dx2'
-        dy2 = f'{stage}.dy2'
+        x2 = f'{stage}.x2'
+        y2 = f'{stage}.y2'
         r2 = f'{stage}.r2'
         two = f'{stage}.two'
         inits.append(oh.make_tensor(two, TensorProto.FLOAT, [], [2.0]))
         
-        nodes.append(oh.make_node('Pow', inputs=[dx_center, two], outputs=[dx2],
-                                  name=f'{stage}.pow_dx'))
-        nodes.append(oh.make_node('Pow', inputs=[dy_center, two], outputs=[dy2],
-                                  name=f'{stage}.pow_dy'))
-        nodes.append(oh.make_node('Add', inputs=[dx2, dy2], outputs=[r2],
+        nodes.append(oh.make_node('Mul', inputs=[w_norm, w_norm], outputs=[x2],
+                                  name=f'{stage}.mul_x2'))
+        nodes.append(oh.make_node('Mul', inputs=[h_norm, h_norm], outputs=[y2],
+                                  name=f'{stage}.mul_y2'))
+        nodes.append(oh.make_node('Add', inputs=[x2, y2], outputs=[r2],
                                   name=f'{stage}.add_r2'))
         
-        # Calculate polynomial terms
+        # Calculate polynomial terms (standard LCS model)
         k1r2 = f'{stage}.k1r2'
         k2r4 = f'{stage}.k2r4'
-        k3r6 = f'{stage}.k3r6'
-        four = f'{stage}.four'
-        six = f'{stage}.six'
-        inits.append(oh.make_tensor(four, TensorProto.FLOAT, [], [4.0]))
-        inits.append(oh.make_tensor(six, TensorProto.FLOAT, [], [6.0]))
-        
         nodes.append(oh.make_node('Mul', inputs=[k1, r2], outputs=[k1r2],
                                   name=f'{stage}.mul_k1r2'))
-        nodes.append(oh.make_node('Pow', inputs=[r2, two], outputs=[f'{stage}.r4'],
-                                  name=f'{stage}.pow_r4'))
-        nodes.append(oh.make_node('Mul', inputs=[k2, f'{stage}.r4'], outputs=[k2r4],
+        nodes.append(oh.make_node('Mul', inputs=[k2, r2], outputs=[f'{stage}.k2r2'],
+                                  name=f'{stage}.mul_k2r2'))
+        nodes.append(oh.make_node('Mul', inputs=[f'{stage}.k2r2', r2], outputs=[k2r4],
                                   name=f'{stage}.mul_k2r4'))
-        nodes.append(oh.make_node('Pow', inputs=[r2, three], outputs=[f'{stage}.r6'],
-                                  name=f'{stage}.pow_r6'))
-        nodes.append(oh.make_node('Mul', inputs=[k3, f'{stage}.r6'], outputs=[k3r6],
-                                  name=f'{stage}.mul_k3r6'))
         
-        # Calculate scale
+        # Calculate scale (standard LCS polynomial)
         poly_term = f'{stage}.poly_term'
         scale = f'{stage}.scale'
-        nodes.append(oh.make_node('Add', inputs=[k1r2, k2r4], outputs=[f'{stage}.k1k2'],
-                                  name=f'{stage}.add_k1k2'))
-        nodes.append(oh.make_node('Add', inputs=[f'{stage}.k1k2', k3r6], outputs=[poly_term],
+        nodes.append(oh.make_node('Add', inputs=[k1r2, k2r4], outputs=[poly_term],
                                   name=f'{stage}.add_poly'))
         nodes.append(oh.make_node('Add', inputs=[poly_term, vcm], outputs=[scale],
                                   name=f'{stage}.add_scale'))
@@ -246,9 +229,9 @@ class LensLCSDisplacementV1(MicroblockBase):
         
         dx = f'{stage}.dx'
         dy = f'{stage}.dy'
-        nodes.append(oh.make_node('Mul', inputs=[dx_center, scale_minus_one], outputs=[dx],
+        nodes.append(oh.make_node('Mul', inputs=[w_norm, scale_minus_one], outputs=[dx],
                                   name=f'{stage}.mul_dx'))
-        nodes.append(oh.make_node('Mul', inputs=[dy_center, scale_minus_one], outputs=[dy],
+        nodes.append(oh.make_node('Mul', inputs=[h_norm, scale_minus_one], outputs=[dy],
                                   name=f'{stage}.mul_dy'))
         
         # Stack into displacement map [h,w,2]
@@ -271,7 +254,8 @@ class LensLCSDisplacementV1(MicroblockBase):
         
         result = BuildResult(outputs, nodes, inits, vis)
         result.appendInput(input_image, type=TensorProto.FLOAT, shape=['n', 3, 'h', 'w'])
-        result.appendInput(lsc_params, type=TensorProto.FLOAT, shape=[6])
+        result.appendInput(lsc_coeffs, type=TensorProto.FLOAT, shape=[2])
+        result.appendInput(vcm, type=TensorProto.FLOAT, shape=[1])
         return result
 
     def build_applier(self, stage: str, prev_stages=None):
@@ -359,11 +343,12 @@ class LensLCSDisplacementV2(MicroblockBase):
     """
     LensLCSDisplacementV2 (v2)
     ---------------------------
-    Approximated displacement map generation for efficiency.
+    Extended displacement map generation with additional LCS coefficients.
 
     Needs:
         - applier [n,3,h,w] : image tensor from upstream
-        - lsc_params [4]    : [k1, k2, vcm, strength] simplified parameters
+        - lsc_coeffs [3]    : [k1, k2, k3] extended LCS coefficients
+        - vcm [1]           : Vignetting correction multiplier
 
     Provides:
         - applier [n,3,h,w] : corrected image tensor
@@ -371,14 +356,15 @@ class LensLCSDisplacementV2(MicroblockBase):
         - lsc_gain [h,w] : generated gain factors
 
     Behavior:
-        - build_algo: generates approximated displacement_map and lsc_gain
+        - build_algo: generates displacement_map and lsc_gain from extended LCS params
         - build_applier: applies displacement-based correction
 
-    Approximated Model:
+    Extended LCS Polynomial Model:
         r^2 = x^2 + y^2
-        scale = 1 + k1*r^2 + k2*r^4 + vcm
-        dx = x * strength * (scale - 1)
-        dy = y * strength * (scale - 1)
+        poly_term = k1*r^2 + k2*r^4 + k3*r^6
+        scale = poly_term + vcm
+        dx = x * (scale - 1)
+        dy = y * (scale - 1)
         gain = scale
     """
     name = 'lens_lcs_displacement_v2'
@@ -387,17 +373,18 @@ class LensLCSDisplacementV2(MicroblockBase):
 
     def build_algo(self, stage: str, prev_stages=None):
         """
-        Generate approximated displacement_map and lsc_gain from simplified parameters.
+        Generate displacement_map and lsc_gain from extended LCS coefficients and VCM.
         """
         vis, nodes, inits = ([], [], [])
         upstream = prev_stages[0] if prev_stages else stage
         input_image = f"{upstream}.applier"
-        lsc_params = f'{stage}.lsc_params'
+        lsc_coeffs = f'{stage}.lsc_coeffs'
+        vcm = f'{stage}.vcm'
         
-        # Split parameters: k1, k2, vcm, strength
-        k1, k2, vcm, strength = [f'{stage}.{p}' for p in ('k1', 'k2', 'vcm', 'strength')]
-        nodes.append(oh.make_node('Split', inputs=[lsc_params], outputs=[k1, k2, vcm, strength],
-                                  name=f'{stage}.split_params', axis=0))
+        # Split LCS coefficients: k1, k2, k3
+        k1, k2, k3 = [f'{stage}.{p}' for p in ('k1', 'k2', 'k3')]
+        nodes.append(oh.make_node('Split', inputs=[lsc_coeffs], outputs=[k1, k2, k3],
+                                  name=f'{stage}.split_coeffs', axis=0))
         
         # Create coordinate grids (normalized to [-1, 1])
         h_coord = f'{stage}.h_coord'
@@ -432,25 +419,37 @@ class LensLCSDisplacementV2(MicroblockBase):
         nodes.append(oh.make_node('Add', inputs=[x2, y2], outputs=[r2],
                                   name=f'{stage}.add_r2'))
         
-        # Calculate polynomial terms
+        # Calculate polynomial terms (extended LCS model)
         k1r2 = f'{stage}.k1r2'
         k2r4 = f'{stage}.k2r4'
+        k3r6 = f'{stage}.k3r6'
+        four = f'{stage}.four'
+        six = f'{stage}.six'
+        inits.append(oh.make_tensor(four, TensorProto.FLOAT, [], [4.0]))
+        inits.append(oh.make_tensor(six, TensorProto.FLOAT, [], [6.0]))
+        
         nodes.append(oh.make_node('Mul', inputs=[k1, r2], outputs=[k1r2],
                                   name=f'{stage}.mul_k1r2'))
         nodes.append(oh.make_node('Pow', inputs=[r2, two], outputs=[f'{stage}.r4'],
                                   name=f'{stage}.pow_r4'))
         nodes.append(oh.make_node('Mul', inputs=[k2, f'{stage}.r4'], outputs=[k2r4],
                                   name=f'{stage}.mul_k2r4'))
+        nodes.append(oh.make_node('Pow', inputs=[r2, three], outputs=[f'{stage}.r6'],
+                                  name=f'{stage}.pow_r6'))
+        nodes.append(oh.make_node('Mul', inputs=[k3, f'{stage}.r6'], outputs=[k3r6],
+                                  name=f'{stage}.mul_k3r6'))
         
-        # Calculate scale
+        # Calculate scale (extended LCS polynomial)
         poly_term = f'{stage}.poly_term'
         scale = f'{stage}.scale'
-        nodes.append(oh.make_node('Add', inputs=[k1r2, k2r4], outputs=[poly_term],
+        nodes.append(oh.make_node('Add', inputs=[k1r2, k2r4], outputs=[f'{stage}.k1k2'],
+                                  name=f'{stage}.add_k1k2'))
+        nodes.append(oh.make_node('Add', inputs=[f'{stage}.k1k2', k3r6], outputs=[poly_term],
                                   name=f'{stage}.add_poly'))
         nodes.append(oh.make_node('Add', inputs=[poly_term, vcm], outputs=[scale],
                                   name=f'{stage}.add_scale'))
         
-        # Calculate displacement vectors with strength
+        # Calculate displacement vectors
         one = f'{stage}.one'
         inits.append(oh.make_tensor(one, TensorProto.FLOAT, [], [1.0]))
         
@@ -458,16 +457,11 @@ class LensLCSDisplacementV2(MicroblockBase):
         nodes.append(oh.make_node('Sub', inputs=[scale, one], outputs=[scale_minus_one],
                                   name=f'{stage}.sub_scale'))
         
-        displacement_factor = f'{stage}.displacement_factor'
-        nodes.append(oh.make_node('Mul', inputs=[strength, scale_minus_one],
-                                  outputs=[displacement_factor],
-                                  name=f'{stage}.mul_strength'))
-        
         dx = f'{stage}.dx'
         dy = f'{stage}.dy'
-        nodes.append(oh.make_node('Mul', inputs=[w_norm, displacement_factor], outputs=[dx],
+        nodes.append(oh.make_node('Mul', inputs=[w_norm, scale_minus_one], outputs=[dx],
                                   name=f'{stage}.mul_dx'))
-        nodes.append(oh.make_node('Mul', inputs=[h_norm, displacement_factor], outputs=[dy],
+        nodes.append(oh.make_node('Mul', inputs=[h_norm, scale_minus_one], outputs=[dy],
                                   name=f'{stage}.mul_dy'))
         
         # Stack into displacement map [h,w,2]
@@ -490,7 +484,8 @@ class LensLCSDisplacementV2(MicroblockBase):
         
         result = BuildResult(outputs, nodes, inits, vis)
         result.appendInput(input_image, type=TensorProto.FLOAT, shape=['n', 3, 'h', 'w'])
-        result.appendInput(lsc_params, type=TensorProto.FLOAT, shape=[4])
+        result.appendInput(lsc_coeffs, type=TensorProto.FLOAT, shape=[3])
+        result.appendInput(vcm, type=TensorProto.FLOAT, shape=[1])
         return result
 
     def build_applier(self, stage: str, prev_stages=None):
