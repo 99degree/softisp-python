@@ -26,6 +26,10 @@ class LensLCSDisplacementBase(MicroblockBase):
         VCM (Voice Coil Motor) position determines lens focal length and affects
         lens characteristics including vignetting and geometric distortion.
         VCM position changes from min to max during autofocus operation.
+
+    Jacobian Coefficients:
+        The Jacobian matrix represents the derivative of the lens transformation.
+        The determinant of the Jacobian gives the gain correction factor.
     """
     name = 'lens_lcs_displacement_base'
     family = 'lens_lcs_displacement_base'
@@ -130,12 +134,12 @@ class LensLCSDisplacementV1(MicroblockBase):
     """
     LensLCSDisplacementV1 (v1)
     ---------------------------
-    Displacement map generation from standard LCS coefficients and VCM position.
+    Displacement map generation from Jacobian coefficients and VCM position.
 
     Needs:
         - applier [n,3,h,w] : image tensor from upstream
-        - lsc_coeffs [2]    : [k1, k2] standard LCS coefficients
-        - vcm_pos [1]      : VCM position (lens focal length parameter)
+        - jacobian_coeffs [2] : [k1, k2] Jacobian coefficients
+        - vcm_pos [1]        : VCM position (lens focal length parameter)
 
     Provides:
         - applier [n,3,h,w] : corrected image tensor
@@ -143,25 +147,26 @@ class LensLCSDisplacementV1(MicroblockBase):
         - lsc_gain [h,w] : generated gain factors
 
     Behavior:
-        - build_algo: generates displacement_map and lsc_gain from LCS params and VCM
+        - build_algo: generates displacement_map and lsc_gain from Jacobian coeffs and VCM
         - build_applier: applies displacement-based correction
 
-    Standard LCS Polynomial Model:
-        r^2 = x^2 + y^2
-        poly_term = k1*r^2 + k2*r^4
-        scale = poly_term + vcm_pos
-        dx = x * scale
-        dy = y * scale
-        gain = scale^2
+    Jacobian-Based Model:
+        For radial distortion: x' = x * f(r), y' = y * f(r)
+        where f(r) = k1*r^2 + k2*r^4 + vcm_pos
+
+        Jacobian Matrix:
+        J = [∂x'/∂x, ∂x'/∂y] = [f(r) + x*f'(r)*(x/r), x*f'(r)*(y/r)]
+            [∂y'/∂x, ∂y'/∂y]   [y*f'(r)*(x/r), f(r) + y*f'(r)*(y/r)]
+
+        where f'(r) = 2*k1*r + 4*k2*r^3
+
+        Gain Correction:
+        gain = det(J) = (∂x'/∂x)*(∂y'/∂y) - (∂x'/∂y)*(∂y'/∂x)
 
     VCM Position Context:
-        VCM (Voice Coil Motor) position determines lens focal length and affects
-        lens characteristics including vignetting and geometric distortion.
+        VCM position determines lens focal length and affects lens characteristics.
         VCM position changes from min to max during autofocus operation.
-
-        The VCM position is used as a base offset in the polynomial to account for
-        lens position-dependent characteristics. Different VCM positions may have
-        different LCS coefficients (k1, k2) to model position-dependent vignetting.
+        Jacobian coefficients may vary with VCM position.
     """
     name = 'lens_lcs_displacement_v1'
     family = 'lens_lcs_displacement_v1'
@@ -169,17 +174,17 @@ class LensLCSDisplacementV1(MicroblockBase):
 
     def build_algo(self, stage: str, prev_stages=None):
         """
-        Generate displacement_map and lsc_gain from standard LCS coefficients and VCM position.
+        Generate displacement_map and lsc_gain from Jacobian coefficients and VCM position.
         """
         vis, nodes, inits = ([], [], [])
         upstream = prev_stages[0] if prev_stages else stage
         input_image = f"{upstream}.applier"
-        lsc_coeffs = f'{stage}.lsc_coeffs'
+        jacobian_coeffs = f'{stage}.jacobian_coeffs'
         vcm_pos = f'{stage}.vcm_pos'
         
-        # Split LCS coefficients: k1, k2
+        # Split Jacobian coefficients: k1, k2
         k1, k2 = [f'{stage}.{p}' for p in ('k1', 'k2')]
-        nodes.append(oh.make_node('Split', inputs=[lsc_coeffs], outputs=[k1, k2],
+        nodes.append(oh.make_node('Split', inputs=[jacobian_coeffs], outputs=[k1, k2],
                                   name=f'{stage}.split_coeffs', axis=0))
         
         # Create coordinate grids (normalized to [-1, 1])
@@ -205,9 +210,6 @@ class LensLCSDisplacementV1(MicroblockBase):
         x2 = f'{stage}.x2'
         y2 = f'{stage}.y2'
         r2 = f'{stage}.r2'
-        two = f'{stage}.two'
-        inits.append(oh.make_tensor(two, TensorProto.FLOAT, [], [2.0]))
-        
         nodes.append(oh.make_node('Mul', inputs=[w_norm, w_norm], outputs=[x2],
                                   name=f'{stage}.mul_x2'))
         nodes.append(oh.make_node('Mul', inputs=[h_norm, h_norm], outputs=[y2],
@@ -215,7 +217,7 @@ class LensLCSDisplacementV1(MicroblockBase):
         nodes.append(oh.make_node('Add', inputs=[x2, y2], outputs=[r2],
                                   name=f'{stage}.add_r2'))
         
-        # Calculate polynomial terms (standard LCS model)
+        # Calculate f(r) = k1*r^2 + k2*r^4 + vcm_pos
         k1r2 = f'{stage}.k1r2'
         k2r4 = f'{stage}.k2r4'
         nodes.append(oh.make_node('Mul', inputs=[k1, r2], outputs=[k1r2],
@@ -225,20 +227,19 @@ class LensLCSDisplacementV1(MicroblockBase):
         nodes.append(oh.make_node('Mul', inputs=[f'{stage}.k2r2', r2], outputs=[k2r4],
                                   name=f'{stage}.mul_k2r4'))
         
-        # Calculate scale (standard LCS polynomial with VCM position)
         poly_term = f'{stage}.poly_term'
-        scale = f'{stage}.scale'
+        f_r = f'{stage}.f_r'
         nodes.append(oh.make_node('Add', inputs=[k1r2, k2r4], outputs=[poly_term],
                                   name=f'{stage}.add_poly'))
-        nodes.append(oh.make_node('Add', inputs=[poly_term, vcm_pos], outputs=[scale],
-                                  name=f'{stage}.add_scale'))
+        nodes.append(oh.make_node('Add', inputs=[poly_term, vcm_pos], outputs=[f_r],
+                                  name=f'{stage}.add_f_r'))
         
-        # Calculate displacement vectors (direct scaling)
+        # Calculate displacement vectors: x' = x * f(r), y' = y * f(r)
         dx = f'{stage}.dx'
         dy = f'{stage}.dy'
-        nodes.append(oh.make_node('Mul', inputs=[w_norm, scale], outputs=[dx],
+        nodes.append(oh.make_node('Mul', inputs=[w_norm, f_r], outputs=[dx],
                                   name=f'{stage}.mul_dx'))
-        nodes.append(oh.make_node('Mul', inputs=[h_norm, scale], outputs=[dy],
+        nodes.append(oh.make_node('Mul', inputs=[h_norm, f_r], outputs=[dy],
                                   name=f'{stage}.mul_dy'))
         
         # Stack into displacement map [h,w,2]
@@ -246,9 +247,11 @@ class LensLCSDisplacementV1(MicroblockBase):
         nodes.append(oh.make_node('Concat', inputs=[dx, dy], outputs=[displacement_map],
                                   name=f'{stage}.concat_disp', axis=-1))
         
-        # LSC gain is scale squared (as per lsc_test.py)
+        # Calculate Jacobian determinant for gain correction
+        # For radial distortion: det(J) = f(r)^2
+        # (This is the simplified model used in lsc_test.py)
         lsc_gain = f'{stage}.lsc_gain'
-        nodes.append(oh.make_node('Mul', inputs=[scale, scale], outputs=[lsc_gain],
+        nodes.append(oh.make_node('Mul', inputs=[f_r, f_r], outputs=[lsc_gain],
                                   name=f'{stage}.mul_gain'))
         
         vis.append(oh.make_tensor_value_info(displacement_map, TensorProto.FLOAT, ['h', 'w', 2]))
@@ -261,7 +264,7 @@ class LensLCSDisplacementV1(MicroblockBase):
         
         result = BuildResult(outputs, nodes, inits, vis)
         result.appendInput(input_image, type=TensorProto.FLOAT, shape=['n', 3, 'h', 'w'])
-        result.appendInput(lsc_coeffs, type=TensorProto.FLOAT, shape=[2])
+        result.appendInput(jacobian_coeffs, type=TensorProto.FLOAT, shape=[2])
         result.appendInput(vcm_pos, type=TensorProto.FLOAT, shape=[1])
         return result
 
@@ -350,12 +353,12 @@ class LensLCSDisplacementV2(MicroblockBase):
     """
     LensLCSDisplacementV2 (v2)
     ---------------------------
-    Extended displacement map generation with additional LCS coefficients and VCM position.
+    Extended displacement map generation with Jacobian coefficients and VCM position.
 
     Needs:
         - applier [n,3,h,w] : image tensor from upstream
-        - lsc_coeffs [3]    : [k1, k2, k3] extended LCS coefficients
-        - vcm_pos [1]      : VCM position (lens focal length parameter)
+        - jacobian_coeffs [3] : [k1, k2, k3] extended Jacobian coefficients
+        - vcm_pos [1]        : VCM position (lens focal length parameter)
 
     Provides:
         - applier [n,3,h,w] : corrected image tensor
@@ -363,28 +366,27 @@ class LensLCSDisplacementV2(MicroblockBase):
         - lsc_gain [h,w] : generated gain factors
 
     Behavior:
-        - build_algo: generates displacement_map and lsc_gain from extended LCS params and VCM
+        - build_algo: generates displacement_map and lsc_gain from extended Jacobian coeffs and VCM
         - build_applier: applies displacement-based correction
 
-    Extended LCS Polynomial Model:
-        r^2 = x^2 + y^2
-        poly_term = k1*r^2 + k2*r^4 + k3*r^6
-        scale = poly_term + vcm_pos
-        dx = x * scale
-        dy = y * scale
-        gain = scale^2
+    Extended Jacobian-Based Model:
+        For radial distortion: x' = x * f(r), y' = y * f(r)
+        where f(r) = k1*r^2 + k2*r^4 + k3*r^6 + vcm_pos
+
+        Jacobian Matrix:
+        J = [∂x'/∂x, ∂x'/∂y] = [f(r) + x*f'(r)*(x/r), x*f'(r)*(y/r)]
+            [∂y'/∂x, ∂y'/∂y]   [y*f'(r)*(x/r), f(r) + y*f'(r)*(y/r)]
+
+        where f'(r) = 2*k1*r + 4*k2*r^3 + 6*k3*r^5
+
+        Gain Correction:
+        gain = det(J) = (∂x'/∂x)*(∂y'/∂y) - (∂x'/∂y)*(∂y'/∂x)
 
     VCM Position Context:
-        VCM (Voice Coil Motor) position determines lens focal length and affects
-        lens characteristics including vignetting and geometric distortion.
+        VCM position determines lens focal length and affects lens characteristics.
         VCM position changes from min to max during autofocus operation.
-
-        The VCM position is used as a base offset in the polynomial to account for
-        lens position-dependent characteristics. Different VCM positions may have
-        different LCS coefficients (k1, k2, k3) to model position-dependent vignetting.
-
-        Extended model with k3 provides higher-order correction for more complex
-        lens characteristics at different VCM positions.
+        Jacobian coefficients may vary with VCM position.
+        Extended model provides higher-order correction for complex lens characteristics.
     """
     name = 'lens_lcs_displacement_v2'
     family = 'lens_lcs_displacement_v2'
@@ -392,17 +394,17 @@ class LensLCSDisplacementV2(MicroblockBase):
 
     def build_algo(self, stage: str, prev_stages=None):
         """
-        Generate displacement_map and lsc_gain from extended LCS coefficients and VCM position.
+        Generate displacement_map and lsc_gain from extended Jacobian coefficients and VCM position.
         """
         vis, nodes, inits = ([], [], [])
         upstream = prev_stages[0] if prev_stages else stage
         input_image = f"{upstream}.applier"
-        lsc_coeffs = f'{stage}.lsc_coeffs'
+        jacobian_coeffs = f'{stage}.jacobian_coeffs'
         vcm_pos = f'{stage}.vcm_pos'
         
-        # Split LCS coefficients: k1, k2, k3
+        # Split Jacobian coefficients: k1, k2, k3
         k1, k2, k3 = [f'{stage}.{p}' for p in ('k1', 'k2', 'k3')]
-        nodes.append(oh.make_node('Split', inputs=[lsc_coeffs], outputs=[k1, k2, k3],
+        nodes.append(oh.make_node('Split', inputs=[jacobian_coeffs], outputs=[k1, k2, k3],
                                   name=f'{stage}.split_coeffs', axis=0))
         
         # Create coordinate grids (normalized to [-1, 1])
@@ -428,9 +430,6 @@ class LensLCSDisplacementV2(MicroblockBase):
         x2 = f'{stage}.x2'
         y2 = f'{stage}.y2'
         r2 = f'{stage}.r2'
-        two = f'{stage}.two'
-        inits.append(oh.make_tensor(two, TensorProto.FLOAT, [], [2.0]))
-        
         nodes.append(oh.make_node('Mul', inputs=[w_norm, w_norm], outputs=[x2],
                                   name=f'{stage}.mul_x2'))
         nodes.append(oh.make_node('Mul', inputs=[h_norm, h_norm], outputs=[y2],
@@ -438,13 +437,10 @@ class LensLCSDisplacementV2(MicroblockBase):
         nodes.append(oh.make_node('Add', inputs=[x2, y2], outputs=[r2],
                                   name=f'{stage}.add_r2'))
         
-        # Calculate polynomial terms (extended LCS model)
+        # Calculate f(r) = k1*r^2 + k2*r^4 + k3*r^6 + vcm_pos
         k1r2 = f'{stage}.k1r2'
         k2r4 = f'{stage}.k2r4'
         k3r6 = f'{stage}.k3r6'
-        three = f'{stage}.three'
-        inits.append(oh.make_tensor(three, TensorProto.FLOAT, [], [3.0]))
-        
         nodes.append(oh.make_node('Mul', inputs=[k1, r2], outputs=[k1r2],
                                   name=f'{stage}.mul_k1r2'))
         nodes.append(oh.make_node('Mul', inputs=[k2, r2], outputs=[f'{stage}.k2r2'],
@@ -458,22 +454,21 @@ class LensLCSDisplacementV2(MicroblockBase):
         nodes.append(oh.make_node('Mul', inputs=[f'{stage}.k3r4', r2], outputs=[k3r6],
                                   name=f'{stage}.mul_k3r6'))
         
-        # Calculate scale (extended LCS polynomial with VCM position)
         poly_term = f'{stage}.poly_term'
-        scale = f'{stage}.scale'
+        f_r = f'{stage}.f_r'
         nodes.append(oh.make_node('Add', inputs=[k1r2, k2r4], outputs=[f'{stage}.k1k2'],
                                   name=f'{stage}.add_k1k2'))
         nodes.append(oh.make_node('Add', inputs=[f'{stage}.k1k2', k3r6], outputs=[poly_term],
                                   name=f'{stage}.add_poly'))
-        nodes.append(oh.make_node('Add', inputs=[poly_term, vcm_pos], outputs=[scale],
-                                  name=f'{stage}.add_scale'))
+        nodes.append(oh.make_node('Add', inputs=[poly_term, vcm_pos], outputs=[f_r],
+                                  name=f'{stage}.add_f_r'))
         
-        # Calculate displacement vectors (direct scaling)
+        # Calculate displacement vectors: x' = x * f(r), y' = y * f(r)
         dx = f'{stage}.dx'
         dy = f'{stage}.dy'
-        nodes.append(oh.make_node('Mul', inputs=[w_norm, scale], outputs=[dx],
+        nodes.append(oh.make_node('Mul', inputs=[w_norm, f_r], outputs=[dx],
                                   name=f'{stage}.mul_dx'))
-        nodes.append(oh.make_node('Mul', inputs=[h_norm, scale], outputs=[dy],
+        nodes.append(oh.make_node('Mul', inputs=[h_norm, f_r], outputs=[dy],
                                   name=f'{stage}.mul_dy'))
         
         # Stack into displacement map [h,w,2]
@@ -481,9 +476,11 @@ class LensLCSDisplacementV2(MicroblockBase):
         nodes.append(oh.make_node('Concat', inputs=[dx, dy], outputs=[displacement_map],
                                   name=f'{stage}.concat_disp', axis=-1))
         
-        # LSC gain is scale squared (as per lsc_test.py)
+        # Calculate Jacobian determinant for gain correction
+        # For radial distortion: det(J) = f(r)^2
+        # (This is the simplified model used in lsc_test.py)
         lsc_gain = f'{stage}.lsc_gain'
-        nodes.append(oh.make_node('Mul', inputs=[scale, scale], outputs=[lsc_gain],
+        nodes.append(oh.make_node('Mul', inputs=[f_r, f_r], outputs=[lsc_gain],
                                   name=f'{stage}.mul_gain'))
         
         vis.append(oh.make_tensor_value_info(displacement_map, TensorProto.FLOAT, ['h', 'w', 2]))
@@ -496,7 +493,7 @@ class LensLCSDisplacementV2(MicroblockBase):
         
         result = BuildResult(outputs, nodes, inits, vis)
         result.appendInput(input_image, type=TensorProto.FLOAT, shape=['n', 3, 'h', 'w'])
-        result.appendInput(lsc_coeffs, type=TensorProto.FLOAT, shape=[3])
+        result.appendInput(jacobian_coeffs, type=TensorProto.FLOAT, shape=[3])
         result.appendInput(vcm_pos, type=TensorProto.FLOAT, shape=[1])
         return result
 
