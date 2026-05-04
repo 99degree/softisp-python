@@ -1,25 +1,26 @@
 from microblocks.base import BuildResult
 import onnx.helper as oh
 from onnx import TensorProto
-from .lens_lcs_base import LensLCSBase
+from microblocks.base import MicroblockBase
 
-class LensLCSV1(LensLCSBase):
+
+class LensLCSV1(MicroblockBase):
     """
     LensLCSV1 (v1)
     --------------
-    Adaptive lens shading correction block.
+    Adaptive lens shading correction block with coefficient resizing.
 
     Inputs (external):
         - prev_stage.applier : upstream image tensor [n,3,h,w]
-        - lens_lcs_v1.lcs_coeffs : full-resolution correction coefficients [H,W]
-        - prev_stage.resize_factor : scalar resize factor []
+        - lcs_coeffs : full-resolution correction coefficients [H,W]
 
     Outputs:
-        - lens_lcs_v1.applier : corrected image tensor [n,3,h*,w*]
-        - lens_lcs_v1.lcs_coeffs_resized : resized coefficient map [h*,w*]
-        - lens_lcs_v1.lcs_coeffs_out : identity copy of original coeffs [H,W]
+        - applier : corrected image tensor [n,3,h*,w*]
+        - lcs_coeffs_resized : resized coefficient map [h*,w*]
+        - lcs_coeffs_out : identity copy of original coeffs [H,W]
     """
     name = "lens_lcs_v1"
+    family = "lens_lcs_v1"
     version = "v1"
 
     def build_algo(self, stage: str, prev_stages=None):
@@ -89,8 +90,8 @@ class LensLCSV1(LensLCSBase):
         }
 
         result = BuildResult(outputs, nodes, inits, vis)
-        result.appendInput(input_image, ['n','c',"h","w"], type=oh.TensorProto.FLOAT)
-        result.appendInput(lcs_coeffs, [1, 1, 'h', 'w'], type=oh.TensorProto.FLOAT)
+        result.appendInput(input_image, ['n','c',"h","w"], type=TensorProto.FLOAT)
+        result.appendInput(lcs_coeffs, [1, 1, 'h', 'w'], type=TensorProto.FLOAT)
         return result
 
     def build_applier(self, stage: str, prev_stages=None):
@@ -115,9 +116,12 @@ class LensLCSV1(LensLCSBase):
         outputs = {"applier": {"name": applier}}
 
         result = BuildResult(outputs, nodes, inits, vis)
-        result.appendInput(input_image, type=oh.TensorProto.FLOAT, desc=['n', 'c', "h", "w"])
-        result.appendInput(lcs_coeffs, type=oh.TensorProto.FLOAT, desc=[1, 1, "h", "w"])
+        result.appendInput(input_image, type=TensorProto.FLOAT, desc=['n', 'c', "h", "w"])
+        result.appendInput(lcs_coeffs, type=TensorProto.FLOAT, desc=[1, 1, "h", "w"])
         return result
+
+    def build_coordinator(self, stage: str, prev_stages=None):
+        return super().build_coordinator(stage, prev_stages)
 
     def build_test_algo(self, stage: str, prev_stages=None):
         H, W = 1080, 1920

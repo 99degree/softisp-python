@@ -3,6 +3,7 @@ import onnx.helper as oh
 from onnx import TensorProto
 from microblocks.base import MicroblockBase
 
+
 class LensLCSBase(MicroblockBase):
     """
     LensLCSBase (v0)
@@ -21,6 +22,7 @@ class LensLCSBase(MicroblockBase):
         - build_applier: multiplies applier × lcs_coeffs (broadcasted across channels)
     """
     name = 'lens_lcs_base'
+    family = 'lcs_lcs_base'
     version = 'v0'
 
     def build_algo(self, stage: str, prev_stages=None):
@@ -47,3 +49,9 @@ class LensLCSBase(MicroblockBase):
         vis.append(oh.make_tensor_value_info(applier, TensorProto.FLOAT, ['n', 3, 'h', 'w']))
         outputs = {'applier': {'name': applier}}
         return BuildResult(outputs, nodes, inits, vis).appendInput(f'{prev_stages[0]}.applier')
+
+    def build_coordinator(self, stage: str, prev_stages=None):
+        return super().build_coordinator(stage, prev_stages)
+
+    def build_test_algo(self, stage: str, prev_stages=None):
+        return self.build_algo(stage, prev_stages)
