@@ -6,7 +6,29 @@ STATUS: ALL TESTS PASSED - PRODUCTION READY
 
 Based on the LSC displacement map PDF documentation, this implementation
 provides displacement map-based lens shading correction using standard LCS
-coefficients and VCM to form the polynomial.
+coefficients and VCM position to form the polynomial.
+
+================================================================================
+VCM POSITION CONTEXT
+================================================================================
+
+What is VCM (Voice Coil Motor)?
+--------------------------------
+VCM is the actuator that moves the lens for autofocus. The VCM position
+determines the lens focal length and affects lens characteristics including:
+- Vignetting (lens shading)
+- Geometric distortion
+- Depth of field
+
+VCM Position Range:
+- VCM position changes from min to max during autofocus operation
+- Different VCM positions have different lens characteristics
+- LCS coefficients may vary with VCM position
+
+VCM Position in Polynomial:
+- VCM position is used as a base offset in the polynomial
+- Accounts for lens position-dependent characteristics
+- Different VCM positions may have different LCS coefficients (k1, k2, k3)
 
 ================================================================================
 IMPLEMENTATION SUMMARY
@@ -27,13 +49,13 @@ ALGORITHMS CREATED
 
 2. LensLCSDisplacementV1 (family: lens_lcs_displacement_v1)
    - Displacement map generation from standard LCS coefficients
-   - Standard parameters: lsc_coeffs [k1, k2] + vcm
-   - Standard LCS polynomial model
+   - Standard parameters: lsc_coeffs [k1, k2] + vcm_pos
+   - Standard LCS polynomial model with VCM position
 
 3. LensLCSDisplacementV2 (family: lens_lcs_displacement_v2)
    - Extended displacement map generation
-   - Extended parameters: lsc_coeffs [k1, k2, k3] + vcm
-   - Extended LCS polynomial model
+   - Extended parameters: lsc_coeffs [k1, k2, k3] + vcm_pos
+   - Extended LCS polynomial model with VCM position
 
 ================================================================================
 KEY FEATURES
@@ -41,9 +63,15 @@ KEY FEATURES
 
 ✅ Standard LCS Parameters
    - Uses standard LCS coefficients (k1, k2, k3)
-   - Uses VCM (vignetting correction multiplier)
-   - Forms polynomial from standard coefficients
+   - Uses VCM position (lens focal length parameter)
+   - Forms polynomial from standard coefficients and VCM position
    - Compatible with existing LCS calibration data
+
+✅ VCM Position Awareness
+   - VCM position determines lens focal length
+   - VCM position changes from min to max during autofocus
+   - Polynomial accounts for lens position-dependent characteristics
+   - LCS coefficients may vary with VCM position
 
 ✅ Independent Classes
    - Each algorithm only depends on MicroblockBase
@@ -106,12 +134,12 @@ GridSample Parameters:
 
 LensLCSDisplacementV1
 ---------------------
-Purpose: Displacement map generation from standard LCS coefficients
+Purpose: Displacement map generation from standard LCS coefficients and VCM position
 
 Inputs:
 - applier [n,3,h,w] : Image tensor from upstream
 - lsc_coeffs [2] : [k1, k2] standard LCS coefficients
-- vcm [1] : Vignetting correction multiplier
+- vcm_pos [1] : VCM position (lens focal length parameter)
 
 Outputs:
 - applier [n,3,h,w] : Corrected image tensor
@@ -125,33 +153,39 @@ Algorithm:
 4. Calculate polynomial terms (standard LCS model):
    - k1*r^2
    - k2*r^4
-5. Calculate scale: scale = k1*r^2 + k2*r^4 + vcm
+5. Calculate scale: scale = k1*r^2 + k2*r^4 + vcm_pos
 6. Calculate displacement vectors:
-   - dx = x * (scale - 1)
-   - dy = y * (scale - 1)
+   - dx = x * scale
+   - dy = y * scale
 7. Stack into displacement map [h,w,2]
-8. LSC gain = scale
+8. LSC gain = scale^2
 9. Apply GridSample for geometric transformation
 10. Apply gain correction
 
-Standard LCS Polynomial Model:
+Standard LCS Polynomial Model with VCM Position:
   r^2 = x^2 + y^2
   poly_term = k1*r^2 + k2*r^4
-  scale = poly_term + vcm
-  dx = x * (scale - 1)
-  dy = y * (scale - 1)
-  gain = scale
+  scale = poly_term + vcm_pos
+  dx = x * scale
+  dy = y * scale
+  gain = scale^2
 
 Use Case: Standard LCS displacement correction with 2 coefficients
 
+VCM Position Context:
+- VCM position determines lens focal length
+- VCM position changes from min to max during autofocus
+- Different VCM positions may have different k1, k2 coefficients
+- Polynomial accounts for lens position-dependent characteristics
+
 LensLCSDisplacementV2
 ---------------------
-Purpose: Extended displacement map generation
+Purpose: Extended displacement map generation with VCM position
 
 Inputs:
 - applier [n,3,h,w] : Image tensor from upstream
 - lsc_coeffs [3] : [k1, k2, k3] extended LCS coefficients
-- vcm [1] : Vignetting correction multiplier
+- vcm_pos [1] : VCM position (lens focal length parameter)
 
 Outputs:
 - applier [n,3,h,w] : Corrected image tensor
@@ -166,24 +200,30 @@ Algorithm:
    - k1*r^2
    - k2*r^4
    - k3*r^6
-5. Calculate scale: scale = k1*r^2 + k2*r^4 + k3*r^6 + vcm
+5. Calculate scale: scale = k1*r^2 + k2*r^4 + k3*r^6 + vcm_pos
 6. Calculate displacement vectors:
-   - dx = x * (scale - 1)
-   - dy = y * (scale - 1)
+   - dx = x * scale
+   - dy = y * scale
 7. Stack into displacement map [h,w,2]
-8. LSC gain = scale
+8. LSC gain = scale^2
 9. Apply GridSample for geometric transformation
 10. Apply gain correction
 
-Extended LCS Polynomial Model:
+Extended LCS Polynomial Model with VCM Position:
   r^2 = x^2 + y^2
   poly_term = k1*r^2 + k2*r^4 + k3*r^6
-  scale = poly_term + vcm
-  dx = x * (scale - 1)
-  dy = y * (scale - 1)
-  gain = scale
+  scale = poly_term + vcm_pos
+  dx = x * scale
+  dy = y * scale
+  gain = scale^2
 
 Use Case: Extended LCS displacement correction with 3 coefficients
+
+VCM Position Context:
+- VCM position determines lens focal length
+- VCM position changes from min to max during autofocus
+- Different VCM positions may have different k1, k2, k3 coefficients
+- Extended model provides higher-order correction for complex lens characteristics
 
 ================================================================================
 STANDARD LCS PARAMETERS
@@ -198,21 +238,26 @@ Parameters:
 - k1: First-order radial coefficient
 - k2: Second-order radial coefficient
 - k3: Third-order radial coefficient (optional)
-- vcm: Vignetting correction multiplier
+- vcm_pos: VCM position (lens focal length parameter)
 
 Polynomial Model:
-  scale = k1*r^2 + k2*r^4 + k3*r^6 + vcm
+  scale = k1*r^2 + k2*r^4 + k3*r^6 + vcm_pos
 
 Where:
 - r^2 = x^2 + y^2 (normalized coordinates)
-- scale: Per-pixel gain factor
-- vcm: Base vignetting correction
+- scale: Per-pixel scale factor
+- vcm_pos: VCM position (lens focal length)
 
 Typical Values:
 - k1: 0.01 to 0.1 (first-order vignetting)
 - k2: -0.0001 to -0.001 (second-order correction)
 - k3: 0.000001 to 0.00001 (third-order correction)
-- vcm: 0.0 to 10.0 (vignetting strength)
+- vcm_pos: 0.0 to 10.0 (VCM position range)
+
+VCM Position Range:
+- VCM position changes from min to max during autofocus
+- Different VCM positions have different lens characteristics
+- LCS coefficients may vary with VCM position
 
 ================================================================================
 TEST RESULTS
@@ -273,7 +318,7 @@ Base Pipeline (External Displacement Map):
   }
 }
 
-V1 Pipeline (Standard LCS Parameters):
+V1 Pipeline (Standard LCS Parameters + VCM Position):
 {
   "stages": {
     "lcs": {
@@ -285,7 +330,7 @@ V1 Pipeline (Standard LCS Parameters):
   }
 }
 
-V2 Pipeline (Extended LCS Parameters):
+V2 Pipeline (Extended LCS Parameters + VCM Position):
 {
   "stages": {
     "lcs": {
@@ -358,34 +403,75 @@ Output:
 STANDARD LCS POLYNOMIAL MODELS
 ================================================================================
 
-V1: Standard Model (2 coefficients)
-------------------------------------
+V1: Standard Model (2 coefficients + VCM Position)
+----------------------------------------------------
 Parameters:
 - lsc_coeffs: [k1, k2]
-- vcm: Vignetting correction multiplier
+- vcm_pos: VCM position (lens focal length parameter)
 
 Polynomial:
-  scale = k1*r^2 + k2*r^4 + vcm
+  scale = k1*r^2 + k2*r^4 + vcm_pos
 
 Typical Values:
 - k1: 0.01 (first-order vignetting)
 - k2: -0.0001 (second-order correction)
-- vcm: 5.0 (vignetting strength)
+- vcm_pos: 5.0 (VCM position)
 
-V2: Extended Model (3 coefficients)
-------------------------------------
+VCM Position Context:
+- VCM position determines lens focal length
+- VCM position changes from min to max during autofocus
+- Different VCM positions may have different k1, k2 coefficients
+
+V2: Extended Model (3 coefficients + VCM Position)
+----------------------------------------------------
 Parameters:
 - lsc_coeffs: [k1, k2, k3]
-- vcm: Vignetting correction multiplier
+- vcm_pos: VCM position (lens focal length parameter)
 
 Polynomial:
-  scale = k1*r^2 + k2*r^4 + k3*r^6 + vcm
+  scale = k1*r^2 + k2*r^4 + k3*r^6 + vcm_pos
 
 Typical Values:
 - k1: 0.01 (first-order vignetting)
 - k2: -0.0001 (second-order correction)
 - k3: 0.000001 (third-order correction)
-- vcm: 5.0 (vignetting strength)
+- vcm_pos: 5.0 (VCM position)
+
+VCM Position Context:
+- VCM position determines lens focal length
+- VCM position changes from min to max during autofocus
+- Different VCM positions may have different k1, k2, k3 coefficients
+- Extended model provides higher-order correction for complex lens characteristics
+
+================================================================================
+VCM POSITION AND LENS CHARACTERISTICS
+================================================================================
+
+How VCM Position Affects Lens Characteristics:
+----------------------------------------------
+1. Vignetting: Different VCM positions have different vignetting patterns
+2. Geometric Distortion: Lens distortion varies with focal length
+3. Depth of Field: Changes with lens position
+4. Field of View: Changes with focal length
+
+VCM Position Range:
+- VCM position changes from min to max during autofocus
+- Min position: Closest focus distance
+- Max position: Farthest focus distance
+- Typical range: 0 to 10 (normalized)
+
+LCS Coefficients vs VCM Position:
+---------------------------------
+Different VCM positions may have different LCS coefficients:
+- k1, k2, k3 may vary with VCM position
+- Calibration data may include coefficient tables
+- Interpolation may be used between VCM positions
+
+Practical Implementation:
+1. Calibrate LCS coefficients at multiple VCM positions
+2. Store coefficient lookup table
+3. Interpolate coefficients based on current VCM position
+4. Apply polynomial with interpolated coefficients
 
 ================================================================================
 COMPARISON WITH OTHER LCS IMPLEMENTATIONS
@@ -396,36 +482,42 @@ LensLCSBase (Traditional):
 - Method: Per-pixel gain multiplication
 - Complexity: Low
 - Use Case: Simple vignetting correction
+- VCM Position: Not used
 
 LensLCSV1 (Adaptive):
 - Purpose: Gain correction with resizing
 - Method: Resize coefficients + multiplication
 - Complexity: Medium
 - Use Case: Coefficient resolution mismatch
+- VCM Position: Not used
 
 LensLCSV2 (Radial):
 - Purpose: Radial gain correction
 - Method: Radial coefficient generation + multiplication
 - Complexity: Medium
 - Use Case: Radial vignetting patterns
+- VCM Position: Not used
 
 LensLCSDisplacementBase:
 - Purpose: Displacement-based correction
 - Method: GridSample + gain multiplication
 - Complexity: High
 - Use Case: Complex geometric + gain correction
+- VCM Position: External (in displacement map)
 
 LensLCSDisplacementV1:
 - Purpose: Standard LCS displacement correction
 - Method: Standard LCS polynomial + GridSample
 - Complexity: High
 - Use Case: Standard LCS with geometric correction
+- VCM Position: Used in polynomial
 
 LensLCSDisplacementV2:
 - Purpose: Extended LCS displacement correction
 - Method: Extended LCS polynomial + GridSample
 - Complexity: High
 - Use Case: Extended LCS with geometric correction
+- VCM Position: Used in polynomial
 
 ================================================================================
 PERFORMANCE CONSIDERATIONS
@@ -443,11 +535,18 @@ V2 Complexity:
 - Time: O(h * w) - extended polynomial per pixel
 - Space: O(h * w * 2) - displacement map storage
 
+VCM Position Update Frequency:
+- VCM position changes during autofocus
+- May need to update displacement map frequently
+- Consider caching for static VCM positions
+- Consider GPU acceleration for real-time updates
+
 Optimization Tips:
-1. Pre-compute displacement maps for fixed parameters
+1. Pre-compute displacement maps for fixed VCM positions
 2. Use lower resolution for preview
 3. Consider GPU acceleration for GridSample
 4. Cache displacement maps when possible
+5. Interpolate between pre-computed displacement maps
 
 ================================================================================
 EXTENSIBILITY
@@ -464,7 +563,7 @@ class LensLCSDisplacementV3(MicroblockBase):
     
     def build_algo(self, stage, prev_stages=None):
         # Your displacement map generation here
-        # Use standard LCS coefficients and VCM
+        # Use standard LCS coefficients and VCM position
         pass
     
     def build_applier(self, stage, prev_stages=None):
@@ -499,17 +598,24 @@ CONCLUSION
 ✅ Proper ISP architecture pattern
 ✅ GridSample-based geometric transformation
 ✅ Combined geometric and gain correction
-✅ Uses standard LCS coefficients and VCM
+✅ Uses standard LCS coefficients and VCM position
+✅ VCM position determines lens focal length
+✅ VCM position changes from min to max during autofocus
 ✅ Compatible with existing LCS calibration data
 ✅ Easy to extend with new algorithms
 
 The implementation provides a flexible, extensible architecture for
 displacement map-based lens shading correction that uses standard LCS
-coefficients and VCM to form the polynomial, making it compatible with
+coefficients and VCM position to form the polynomial, making it compatible with
 existing LCS calibration data and workflows.
 
 This implementation follows the principles outlined in the LSC displacement
 map PDF documentation, providing accurate geometric and gain correction for
-complex lens distortions using standard LCS parameters.
+complex lens distortions using standard LCS parameters and VCM position.
+
+The VCM position is properly modeled as a lens focal length parameter that
+affects lens characteristics, with the polynomial accounting for lens
+position-dependent characteristics. Different VCM positions may have different
+LCS coefficients to model position-dependent vignetting and distortion.
 
 ================================================================================
