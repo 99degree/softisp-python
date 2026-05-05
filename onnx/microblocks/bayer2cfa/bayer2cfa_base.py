@@ -142,7 +142,7 @@ class Bayer2CFABase(MicroblockBase):
         return result
 
     def build_coordinator(self, stage, prev_stages=None):
-        return super().build_coordinator(stage, prev_stages)
+        return BuildResult({}, [], [], [])
 
     def build_algo(self, stage, prev_stages=None):
         return self.build_applier(stage, prev_stages)

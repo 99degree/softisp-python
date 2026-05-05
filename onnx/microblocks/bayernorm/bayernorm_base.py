@@ -54,7 +54,7 @@ class BayerNormBase(MicroblockBase):
         return result
 
     def build_coordinator(self, stage, prev_stages=None):
-        return super().build_coordinator(stage, prev_stages)
+        return BuildResult({}, [], [], [])
 
     def build_applier(self, stage, prev_stages=None):
         return self.build_algo(stage, prev_stages)

@@ -134,7 +134,7 @@ class AutoExposureSimple(MicroblockBase):
         return result
 
     def build_coordinator(self, stage, prev_stages=None):
-        return super().build_coordinator(stage, prev_stages)
+        return BuildResult({}, [], [], [])
 
     def build_test_algo(self, stage, prev_stages=None):
         return self.build_algo(stage, prev_stages)
@@ -313,7 +313,7 @@ class AutoExposureStats(MicroblockBase):
         return result
 
     def build_coordinator(self, stage, prev_stages=None):
-        return super().build_coordinator(stage, prev_stages)
+        return BuildResult({}, [], [], [])
 
     def build_test_algo(self, stage, prev_stages=None):
         return self.build_algo(stage, prev_stages)
@@ -458,7 +458,7 @@ class AutoExposureYUV(MicroblockBase):
         return result
 
     def build_coordinator(self, stage, prev_stages=None):
-        return super().build_coordinator(stage, prev_stages)
+        return BuildResult({}, [], [], [])
 
     def build_test_algo(self, stage, prev_stages=None):
         return self.build_algo(stage, prev_stages)
@@ -601,7 +601,7 @@ class AutoExposureHistogram(MicroblockBase):
         return result
 
     def build_coordinator(self, stage, prev_stages=None):
-        return super().build_coordinator(stage, prev_stages)
+        return BuildResult({}, [], [], [])
 
     def build_test_algo(self, stage, prev_stages=None):
         return self.build_algo(stage, prev_stages)
@@ -739,7 +739,7 @@ class AutoExposureMultiZone(MicroblockBase):
         return result
 
     def build_coordinator(self, stage, prev_stages=None):
-        return super().build_coordinator(stage, prev_stages)
+        return BuildResult({}, [], [], [])
 
     def build_test_algo(self, stage, prev_stages=None):
         return self.build_algo(stage, prev_stages)

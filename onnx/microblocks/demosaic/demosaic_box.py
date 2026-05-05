@@ -24,7 +24,7 @@ class DemosaicBoxV0(DemosaicBase):
         return super().build_test_algo(stage, prev_stages)
 
     def build_coordinator(self, stage, prev_stages=None):
-        return super().build_coordinator(stage, prev_stages)
+        return BuildResult({}, [], [], [])
 
     def build_applier(self, stage: str, prev_stages=None, mode: str = "linear"):
         """

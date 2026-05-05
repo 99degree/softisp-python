@@ -121,7 +121,7 @@ class LensLCSV1(MicroblockBase):
         return result
 
     def build_coordinator(self, stage: str, prev_stages=None):
-        return super().build_coordinator(stage, prev_stages)
+        return BuildResult({}, [], [], [])
 
     def build_test_algo(self, stage: str, prev_stages=None):
         H, W = 1080, 1920
