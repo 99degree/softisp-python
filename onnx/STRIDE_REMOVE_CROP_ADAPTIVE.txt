@@ -1,0 +1,184 @@
+================================================================================
+STRIDE REMOVE CROP - ADAPTIVE WIDTH EXTRACTION
+================================================================================
+
+STATUS: IMPLEMENTED WITH ADAPTIVE WIDTH EXTRACTION ✅
+
+Updated stride_remove_crop microblock to extract width from input tensor
+and calculate crop width based on stride. No more hardcoded width values.
+
+================================================================================
+PROBLEM
+================================================================================
+
+The original implementation had a hardcoded width (default 1920) that
+was set in the __init__ method. This was not adaptive and required
+manual configuration for different input resolutions.
+
+Original Implementation:
+    def __init__(self, fixed_width: int = 1920, dim = 4):
+        super().__init__()
+        self.fixed_width = fixed_width
+        self.dim = dim
+
+    def build_applier(self, stage: str, prev_stages=None):
+        ends_const = oh.make_tensor(ends, TensorProto.INT64, [1], [self.fixed_width])
+
+================================================================================
+SOLUTION
+================================================================================
+
+The new implementation:
+1. Removes __init__ method (follows ISP pattern)
+2. Makes stride a class attribute (default: 2)
+3. Extracts width from input tensor shape using ONNX Shape and Gather
+4. Calculates crop width as input_width / stride
+5. Uses calculated crop width for Slice operation
+
+New Implementation:
+    stride = 2  # Class attribute
+    dim = 4     # Class attribute
+
+    def build_applier(self, stage: str, prev_stages=None):
+        # Get input shape
+        input_shape = f"{stage}.input_shape"
+        nodes.append(oh.make_node('Shape', inputs=[input_image], outputs=[input_shape]))
+        
+        # Extract width (index 3)
+        width_index = f"{stage}.width_index"
+        inits.append(oh.make_tensor(width_index, TensorProto.INT64, [], [3]))
+        nodes.append(oh.make_node('Gather', inputs=[input_shape, width_index], outputs=[input_width]))
+        
+        # Calculate crop width: input_width / stride
+        nodes.append(oh.make_node('Div', inputs=[input_width, stride_const], outputs=[crop_width]))
+        
+        # Slice with calculated crop width
+        nodes.append(oh.make_node('Slice', inputs=[input_image, starts, crop_width, axes], outputs=[out_name]))
+
+================================================================================
+HOW IT WORKS
+================================================================================
+
+Input Tensor:
+    Shape: [N, C, H, W]
+    Example: [1, 4, 1080, 2048] with stride=2
+
+Processing Steps:
+1. Extract input shape: [1, 4, 1080, 2048]
+2. Extract width: 2048
+3. Calculate crop width: 2048 / 2 = 1024
+4. Slice: [0:1, 0:4, 0:1080, 0:1024]
+
+Output Tensor:
+    Shape: [N, C, H, W/stride]
+    Example: [1, 4, 1080, 1024]
+
+================================================================================
+AVAILABLE VARIANTS
+================================================================================
+
+Base Class:
+- CropWidthFixedBase: Base class with configurable stride and dim
+
+3-Channel Variants (for RGB/YUV):
+- CropWidth3CH: 3-channel variant (dim=3)
+
+Stride Variants:
+- CropWidthStride2: Stride=2 (most common)
+- CropWidth3CHStride2: 3-channel with stride=2
+- CropWidthStride4: Stride=4
+- CropWidth3CHStride4: 3-channel with stride=4
+
+================================================================================
+USAGE EXAMPLES
+================================================================================
+
+Example 1: Default (stride=2, 4-channel)
+    {
+      "stride_remove_crop": {
+        "class": "stride_remove_crop",
+        "inputs": ["bayer"]
+      }
+    }
+
+Example 2: 3-channel with stride=2
+    {
+      "stride_remove_crop": {
+        "class": "stride_remove_crop",
+        "inputs": ["yuv"]
+      }
+    }
+
+Example 3: Stride=4
+    {
+      "stride_remove_crop": {
+        "class": "stride_remove_crop",
+        "inputs": ["bayer"]
+      }
+    }
+
+================================================================================
+ONNX NODES
+================================================================================
+
+The implementation uses the following ONNX nodes:
+
+1. Shape: Extract tensor shape
+2. Gather: Extract width from shape (index 3)
+3. Div: Calculate crop width (input_width / stride)
+4. Slice: Crop to calculated width
+
+Total: ~4-5 ONNX nodes
+
+================================================================================
+BENEFITS
+================================================================================
+
+✅ Adaptive width extraction from input tensor
+✅ No hardcoded width values
+✅ Works with any input resolution
+✅ Configurable stride via class attribute
+✅ Multiple variants for different use cases
+✅ Follows ISP pattern (no __init__ method)
+✅ Reduced parameter complexity
+
+================================================================================
+COMPARISON
+================================================================================
+
+Before (Hardcoded):
+    - Fixed width: 1920
+    - Requires manual configuration
+    - Not adaptive to different resolutions
+    - Uses __init__ method
+
+After (Adaptive):
+    - Calculated width: input_width / stride
+    - Automatic adaptation to input resolution
+    - Works with any resolution
+    - Uses class attributes
+    - ~4-5 ONNX nodes
+
+================================================================================
+FILES UPDATED
+================================================================================
+
+- microblocks/stride_remove_crop/stride_remove_crop_base.py
+- microblocks/stride_remove_crop/__init__.py
+
+================================================================================
+CONCLUSION
+================================================================================
+
+✅ Implemented adaptive width extraction
+✅ Removed hardcoded width values
+✅ Added multiple stride variants
+✅ Follows ISP pattern
+✅ Works with any input resolution
+
+The stride_remove_crop microblock now automatically extracts the width from
+the input tensor and calculates the crop width based on the stride. This
+makes it adaptive to different input resolutions without requiring
+manual configuration.
+
+================================================================================

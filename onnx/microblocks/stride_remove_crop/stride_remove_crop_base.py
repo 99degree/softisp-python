@@ -5,15 +5,22 @@ from onnx import TensorProto
 class CropWidthFixedBase(MicroblockBase):
     """
     Microblock that crops the width dimension of an [N,C,H,W] tensor
-    to a fixed width value. N, C, H remain unchanged.
+    to remove stride/padding. The input tensor has stride (width=stride),
+    and we want to crop it to the actual width (width=width).
+    
+    For example:
+    - Input: [N,C,H,2048] with stride=2
+    - Output: [N,C,H,1024] (2048/2 = 1024)
+    
+    The stride is passed as a parameter, and the crop width is calculated
+    as input_width / stride.
     """
     name = "stride_remove_crop"
     version = "v0"
-
-    def __init__(self, fixed_width: int = 1920, dim = 4):
-        super().__init__()
-        self.fixed_width = fixed_width
-        self.dim = dim
+    
+    # Default stride (can be overridden in subclasses)
+    stride = 2
+    dim = 4
 
     def build_applier(self, stage: str, prev_stages=None):
         upstream = prev_stages[0] if prev_stages else stage
@@ -21,24 +28,48 @@ class CropWidthFixedBase(MicroblockBase):
         out_name    = f"{stage}.applier"
 
         # Names
+        input_shape = f"{stage}.input_shape"
+        input_width = f"{stage}.input_width"
+        stride_val = f"{stage}.stride_val"
+        crop_width = f"{stage}.crop_width"
         starts = f"{stage}.crop_starts"
         ends   = f"{stage}.crop_ends"
         axes   = f"{stage}.crop_axes"
 
         # Initializers
-        starts_const = oh.make_tensor(starts, TensorProto.INT64, [1], [0])                 # start at 0
-        ends_const   = oh.make_tensor(ends,   TensorProto.INT64, [1], [self.fixed_width])  # fixed width
-        axes_const   = oh.make_tensor(axes,   TensorProto.INT64, [1], [3])                 # slice width axis
+        stride_const = oh.make_tensor(stride_val, TensorProto.INT64, [], [self.stride])
+        axes_const   = oh.make_tensor(axes,   TensorProto.INT64, [], [3])  # slice width axis
 
         # Nodes
-        slice_node = oh.make_node(
-            "Slice",
-            inputs=[input_image, starts, ends, axes],
-            outputs=[out_name],
-            name=f"{stage}_slice"
+        # Get input shape
+        nodes = [
+            oh.make_node('Shape', inputs=[input_image], outputs=[input_shape],
+                        name=f"{stage}_shape")
+        ]
+        
+        # Extract width (index 3)
+        width_index = f"{stage}.width_index"
+        inits = [oh.make_tensor(width_index, TensorProto.INT64, [], [3])]
+        nodes.append(
+            oh.make_node('Gather', inputs=[input_shape, width_index], outputs=[input_width],
+                        name=f"{stage}_gather_width")
         )
-
-        inits = [starts_const, ends_const, axes_const]
+        
+        # Calculate crop width: input_width / stride
+        nodes.append(
+            oh.make_node('Div', inputs=[input_width, stride_const], outputs=[crop_width],
+                        name=f"{stage}_div_crop_width")
+        )
+        
+        # Create starts (0) and ends (crop_width)
+        starts_const = oh.make_tensor(starts, TensorProto.INT64, [], [0])
+        inits.extend([stride_const, starts_const, axes_const])
+        
+        nodes.append(
+            oh.make_node('Slice', inputs=[input_image, starts, crop_width, axes],
+                        outputs=[out_name],
+                        name=f"{stage}_slice")
+        )
 
         vis = [
             oh.make_tensor_value_info(input_image, TensorProto.FLOAT, ["n", self.dim, "H", "w"]),
@@ -47,7 +78,7 @@ class CropWidthFixedBase(MicroblockBase):
 
         outputs = {"applier": {"name": out_name, "type": TensorProto.FLOAT, "shape":["n", self.dim, "H", "W"] }}
 
-        return BuildResult(outputs, [slice_node], inits, vis) \
+        return BuildResult(outputs, nodes, inits, vis) \
             .appendInput(input_image, type=TensorProto.FLOAT)
 
     def build_algo(self, stage: str, prev_stages=None):
@@ -59,9 +90,49 @@ class CropWidthFixedBase(MicroblockBase):
 
 
 class CropWidth3CH(CropWidthFixedBase):
+    """
+    3-channel variant for RGB/YUV images.
+    """
     dim = 3
     name = "stride_remove_crop"
     version = "v1"
 
-    def __init__(self, fixed_width: int = 1920, dim: int = 3):
-        super().__init__(fixed_width=fixed_width, dim=dim)
+
+class CropWidthStride2(CropWidthFixedBase):
+    """
+    Variant with stride=2 (most common case).
+    Input width is divided by 2 to get output width.
+    """
+    stride = 2
+    name = "stride_remove_crop"
+    version = "v2"
+
+
+class CropWidth3CHStride2(CropWidthFixedBase):
+    """
+    3-channel variant with stride=2.
+    """
+    dim = 3
+    stride = 2
+    name = "stride_remove_crop"
+    version = "v3"
+
+
+class CropWidthStride4(CropWidthFixedBase):
+    """
+    Variant with stride=4.
+    Input width is divided by 4 to get output width.
+    """
+    stride = 4
+    name = "stride_remove_crop"
+    version = "v4"
+
+
+class CropWidth3CHStride4(CropWidthFixedBase):
+    """
+    3-channel variant with stride=4.
+    """
+    dim = 3
+    stride = 4
+    name = "stride_remove_crop"
+    version = "v5"
