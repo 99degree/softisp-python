@@ -17,20 +17,23 @@ from .deshake_loop_v2 import (
 )
 
 from .deshake_applier import (
-    DeshakeApplierBase,
-    DeshakeApplierV1
+    DeshakeApplier
 )
 
 from .deshake_applier_v2 import (
     DeshakeApplierV2
 )
 
-from .deshake_applier_v3 import (
-    DeshakeApplierV3
+from .deshake_mesh_grid import (
+    DeshakeMeshGridBase
 )
 
-from .deshake_grid_generator import (
-    DeshakeGridGenerator
+from .deshake_mesh_grid_simple import (
+    DeshakeMeshGridSimple
+)
+
+from .deshake_mesh_grid_full import (
+    DeshakeMeshGridFull
 )
 
 from .rotation_wrapper import (
@@ -43,24 +46,24 @@ from .deshake_coordinator_cpu import (
 )
 
 __all__ = [
-    # Algorithms (3 classes)
+    # Stage 1: Algo Domain (3 classes)
     'DeshakeAlgoBase',
     'DeshakeAlgoV1',
     'DeshakeAlgoV2',
     
-    # Control Loops / Coordinators (3 classes)
+    # Stage 2: Coordinator Domain - Mesh Grid Generation (3 classes)
+    'DeshakeMeshGridBase',
+    'DeshakeMeshGridSimple',
+    'DeshakeMeshGridFull',
+    
+    # Stage 3: Applier Domain - Grid Mapping (2 classes)
+    'DeshakeApplier',
+    'DeshakeApplierV2',
+    
+    # Legacy Control Loops (2 classes)
     'DeshakeLoopBase',
     'DeshakeLoopV1',
     'DeshakeLoopV2',
-    
-    # Appliers (4 classes)
-    'DeshakeApplierBase',
-    'DeshakeApplierV1',
-    'DeshakeApplierV2',
-    'DeshakeApplierV3',
-    
-    # Grid Generator (1 class)
-    'DeshakeGridGenerator',
     
     # Universal Rotation Wrapper (2 classes)
     'RotationState',
@@ -70,6 +73,8 @@ __all__ = [
     'DeshakeCoordinatorCPU',
 ]
 
-# Total: 14 classes
-# Architecture: Algo → Coordinator (CPU + ONNX) → Applier
-# V3: Universal rotation wrapper + 16x16 grid generator
+# Total: 16 classes
+# Industrial-Level API:
+# Stage 1: Algo Domain → Output homography [3,3]
+# Stage 2: Coordinator Domain → Output mesh_grid [mesh_h,mesh_w,2]
+# Stage 3: Applier Domain → Apply grid mapping to frame
