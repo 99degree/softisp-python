@@ -5,19 +5,25 @@ from onnx import TensorProto
 class DownscaleToSDBase(ApplierPassthrough, MicroblockBase):
     """
     Microblock that adaptively downscales any input resolution to roughly
-    SD size using an integer ratio, saving compute for subsequent stages.
+    SD size using an integer ratio, with padding alignment for forthcoming
+    algorithm stages.
     
     How it works:
     1. Extract N, C, H, W from input tensor shape
     2. Calculate integer ratio: ratio = max(ceil(H/target_H), ceil(W/target_W), 1)
     3. Compute output_H = H // ratio, output_W = W // ratio
-    4. Resize to [N, C, output_H, output_W]
+    4. Align to padding boundary: padded_H = ceil(output_H / align) * align
+    5. Resize to [N, C, padded_H, padded_W]
     
-    Examples (original resolution, before bayer2cfa):
-        4K  (3840x2160) → ratio=6 → 640x360
-        FHD (1920x1080) → ratio=3 → 640x360
-        HD  (1280x720)  → ratio=2 → 640x360
-        SD  (720x480)   → ratio=1 → 720x480 (unchanged)
+    Padding alignment ensures the output tensor dimensions are multiples
+    of the alignment value (default 16), which is required by many ISP
+    algorithm stages (AE, AWB, demosaic, etc.).
+    
+    Examples (original resolution, before bayer2cfa, alignment=16):
+        4K  (3840x2160) → ratio=6 → 640x360 → 640x368
+        FHD (1920x1080) → ratio=3 → 640x360 → 640x368
+        HD  (1280x720)  → ratio=2 → 640x360 → 640x368
+        SD  (720x480)   → ratio=1 → 720x480 → 720x480 (already aligned)
     
     Uses ONNX Resize operator with nearest-neighbor mode for speed.
     """
@@ -25,6 +31,7 @@ class DownscaleToSDBase(ApplierPassthrough, MicroblockBase):
     version = "v0"
     target_height = 480
     target_width = 640
+    alignment = 16  # padding alignment for forthcoming algo stages
     dim = 4
 
     def _build(self, stage: str, prev_stages=None):
@@ -55,9 +62,21 @@ class DownscaleToSDBase(ApplierPassthrough, MicroblockBase):
         one_int = f"{stage}.one_int"
         zero_int = f"{stage}.zero_int"
 
-        # Output dimensions
+        # Downscaled output dimensions (before padding)
         out_h = f"{stage}.out_h"
         out_w = f"{stage}.out_w"
+
+        # Padding alignment
+        align_val = f"{stage}.align_val"
+        align_m1 = f"{stage}.align_m1"
+        h_pad = f"{stage}.h_pad"
+        w_pad = f"{stage}.w_pad"
+        h_add = f"{stage}.h_add"
+        w_add = f"{stage}.w_add"
+        h_div_align = f"{stage}.h_div_align"
+        w_div_align = f"{stage}.w_div_align"
+
+        # Final sizes
         sizes = f"{stage}.sizes"
         sizes_int64 = f"{stage}.sizes_int64"
 
@@ -71,6 +90,8 @@ class DownscaleToSDBase(ApplierPassthrough, MicroblockBase):
             oh.make_tensor(one_const, TensorProto.INT64, [], [1]),
             oh.make_tensor(one_int, TensorProto.INT64, [], [1]),
             oh.make_tensor(zero_int, TensorProto.INT64, [], [0]),
+            oh.make_tensor(align_val, TensorProto.INT64, [], [self.alignment]),
+            oh.make_tensor(align_m1, TensorProto.INT64, [], [self.alignment - 1]),
         ]
 
         nodes = [
@@ -103,20 +124,35 @@ class DownscaleToSDBase(ApplierPassthrough, MicroblockBase):
             oh.make_node('Max', inputs=[ratio, one_int], outputs=[ratio],
                         name=f"{stage}_max_one"),
 
-            # 4. output_H = H // ratio, output_W = W // ratio
+            # 4. Downscaled output: output_H = H // ratio, output_W = W // ratio
             oh.make_node('Div', inputs=[h_dim, ratio], outputs=[out_h], name=f"{stage}_div_out_h"),
             oh.make_node('Div', inputs=[w_dim, ratio], outputs=[out_w], name=f"{stage}_div_out_w"),
 
-            # 5. Concatenate sizes: [N, C, out_H, out_W]
-            oh.make_node('Concat', inputs=[n_dim, c_dim, out_h, out_w], outputs=[sizes],
+            # 5. Align to padding boundary:
+            #    padded_H = ((output_H + alignment - 1) // alignment) * alignment
+            oh.make_node('Add', inputs=[out_h, align_m1], outputs=[h_add],
+                        name=f"{stage}_add_h_align"),
+            oh.make_node('Add', inputs=[out_w, align_m1], outputs=[w_add],
+                        name=f"{stage}_add_w_align"),
+            oh.make_node('Div', inputs=[h_add, align_val], outputs=[h_div_align],
+                        name=f"{stage}_div_h_align"),
+            oh.make_node('Div', inputs=[w_add, align_val], outputs=[w_div_align],
+                        name=f"{stage}_div_w_align"),
+            oh.make_node('Mul', inputs=[h_div_align, align_val], outputs=[h_pad],
+                        name=f"{stage}_mul_h_pad"),
+            oh.make_node('Mul', inputs=[w_div_align, align_val], outputs=[w_pad],
+                        name=f"{stage}_mul_w_pad"),
+
+            # 6. Concatenate sizes: [N, C, padded_H, padded_W]
+            oh.make_node('Concat', inputs=[n_dim, c_dim, h_pad, w_pad], outputs=[sizes],
                         name=f"{stage}_concat_sizes", axis=0),
 
-            # 6. Cast sizes to int64 (Resize expects INT64 for sizes)
+            # 7. Cast sizes to int64 (Resize expects INT64 for sizes)
             oh.make_node('Cast', inputs=[sizes], outputs=[sizes_int64],
                         name=f"{stage}_cast_sizes", to=TensorProto.INT64),
         ]
 
-        # 7. Resize with nearest neighbor for speed
+        # 8. Resize with nearest neighbor for speed
         roi = f"{stage}.roi"
         nodes.append(
             oh.make_node('Resize', inputs=[input_image, roi, zero_int, sizes_int64],
@@ -142,10 +178,13 @@ class DownscaleToSDBase(ApplierPassthrough, MicroblockBase):
         return super().build_test_algo(stage, prev_stages)
 
 
+# === Subclasses with different targets ===
+
 class DownscaleToSD(DownscaleToSDBase):
-    """SD target 640x480."""
+    """SD target 640x480, alignment 16."""
     target_height = 480
     target_width = 640
+    alignment = 16
     version = "v1"
 
 
@@ -153,14 +192,16 @@ class DownscaleToSD3CH(DownscaleToSDBase):
     """3-channel variant, SD target 640x480."""
     target_height = 480
     target_width = 640
+    alignment = 16
     dim = 3
     version = "v2"
 
 
 class DownscaleToQVGA(DownscaleToSDBase):
-    """QVGA target 320x240 for max compute savings."""
+    """QVGA target 320x240, alignment 16."""
     target_height = 240
     target_width = 320
+    alignment = 16
     version = "v3"
 
 
@@ -168,5 +209,23 @@ class DownscaleToQVGA3CH(DownscaleToSDBase):
     """3-channel variant, QVGA target 320x240."""
     target_height = 240
     target_width = 320
+    alignment = 16
     dim = 3
     version = "v4"
+
+
+class DownscaleToSDAlign32(DownscaleToSDBase):
+    """SD target 640x480, alignment 32."""
+    target_height = 480
+    target_width = 640
+    alignment = 32
+    version = "v5"
+
+
+class DownscaleToSD3CHAlign32(DownscaleToSDBase):
+    """3-channel variant, SD target 640x480, alignment 32."""
+    target_height = 480
+    target_width = 640
+    alignment = 32
+    dim = 3
+    version = "v6"
