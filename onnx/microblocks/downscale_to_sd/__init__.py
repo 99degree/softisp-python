@@ -4,6 +4,8 @@ from .downscale_to_sd import (
     DownscaleToSD3CH,
     DownscaleToQVGA,
     DownscaleToQVGA3CH,
+    DownscaleToSDAlign32,
+    DownscaleToSD3CHAlign32,
 )
 
 __all__ = [
@@ -12,4 +14,6 @@ __all__ = [
     'DownscaleToSD3CH',
     'DownscaleToQVGA',
     'DownscaleToQVGA3CH',
+    'DownscaleToSDAlign32',
+    'DownscaleToSD3CHAlign32',
 ]
