@@ -1,0 +1,486 @@
+================================================================================
+EXPOSURE FUSION MICROBLOCK - ARCHITECTURE
+================================================================================
+
+STATUS: IMPLEMENTED WITH ALGO/COORDINATOR/APPLIER SEPARATION ✅
+
+Implemented exposure fusion microblock for still image HDR with proper
+separation of concerns:
+- Algo: Extract exposure information from frames
+- Coordinator: Sensor fusion + iterative blending
+- Applier: Apply tone mapping for display
+
+================================================================================
+NEW ARCHITECTURE
+================================================================================
+
+Pipeline Flow:
+┌─────────────────┐    ┌──────────────────┐    ┌─────────────────┐
+│  Exposure       │    │  Exposure        │    │  Exposure       │
+│  Fusion Algo    │───▶│  Fusion Loop     │───▶│  Fusion Applier │
+│                 │    │  (Coordinator)   │    │                 │
+└─────────────────┘    └──────────────────┘    └─────────────────┘
+        |                        |                        |
+        ▼                        ▼                        ▼
+ Extract                 Fuse + Blend            Apply Tone
+ Exposure Info           Multiple Exposures      Mapping
+
+================================================================================
+COMPONENTS
+================================================================================
+
+1. EXPOSURE FUSION ALGORITHMS (exposure_fusion_algo.py)
+   ------------------------------------------------------
+   Purpose: Extract exposure information from multiple frames
+   
+   Classes:
+   - ExposureFusionAlgoBase (family: exposure_fusion_algo_base)
+   - ExposureFusionAlgoV1 (family: exposure_fusion_algo_v1)
+   - ExposureFusionAlgoV2 (family: exposure_fusion_algo_v2)
+   
+   Methods:
+   - build_algo(): Extract exposure information from frames
+   - build_coordinator(): Not used
+   - build_applier(): Not used
+   
+   Inputs:
+   - frames [n,m,3,h,w] : Multiple exposure frames (m exposures)
+   - exposure_values [m] : Exposure values for each frame
+   
+   Outputs:
+   - exposure_ratios [m] : Normalized exposure ratios
+   - brightness [m] : Average brightness per frame
+   - contrast [m] : Contrast per frame
+   - saturation [m] : Saturation per frame
+   - quality [m] : Quality score per frame (V1, V2)
+   - well_exposed [m] : Well-exposed mask per frame (V1)
+   - well_exposed [m,h,w] : Well-exposed mask per pixel (V2)
+   - weight_map [m,h,w] : Weight map for fusion (V2)
+   
+   Complexity:
+   - ExposureFusionAlgoBase: ~20-30 ONNX nodes
+   - ExposureFusionAlgoV1: ~40-50 ONNX nodes
+   - ExposureFusionAlgoV2: ~60-80 ONNX nodes
+
+2. EXPOSURE FUSION CONTROL LOOPS (exposure_fusion_loop.py)
+   ---------------------------------------------------------
+   Purpose: Sensor fusion + iterative blending
+   
+   Classes:
+   - ExposureFusionLoopBase (family: exposure_fusion_loop_base)
+   - ExposureFusionLoopV1 (family: exposure_fusion_loop_v1)
+   
+   Methods:
+   - build_algo(): Not used
+   - build_coordinator(): Create Loop for exposure fusion
+   - build_applier(): Not used
+   
+   Inputs:
+   - frames [n,m,3,h,w] : Multiple exposure frames (m exposures)
+   - exposure_ratios [m] : Normalized exposure ratios
+   - brightness [m] : Average brightness per frame
+   - contrast [m] : Contrast per frame
+   - saturation [m] : Saturation per frame
+   - quality [m] : Quality score per frame (V1)
+   - well_exposed [m] : Well-exposed mask per frame (V1)
+   - fusion_strength [1] : Fusion strength (0-1)
+   - ghost_threshold [1] : Ghosting detection threshold (V1)
+   - iterations [1] : Number of fusion iterations
+   
+   Outputs:
+   - fused_frame [n,3,h,w] : Fused frame
+   - weights [m] : Final weights for each exposure
+   - dynamic_range [1] : Estimated dynamic range
+   - ghost_mask [n,1,h,w] : Ghosting mask (V1)
+   
+   Complexity:
+   - ExposureFusionLoopBase: ~50-70 ONNX nodes
+   - ExposureFusionLoopV1: ~70-90 ONNX nodes
+
+3. EXPOSURE FUSION APPLIERS (exposure_fusion_applier.py)
+   ------------------------------------------------------
+   Purpose: Apply tone mapping to fused HDR frame
+   
+   Classes:
+   - ExposureFusionApplierBase (family: exposure_fusion_applier_base)
+   - ExposureFusionApplierV1 (family: exposure_fusion_applier_v1)
+   - ExposureFusionApplierV2 (family: exposure_fusion_applier_v2)
+   
+   Methods:
+   - build_algo(): Not used
+   - build_coordinator(): Not used
+   - build_applier(): Apply tone mapping
+   
+   Inputs:
+   - fused_frame [n,3,h,w] : Fused HDR frame
+   - dynamic_range [1] : Estimated dynamic range
+   - target_brightness [1] : Target brightness (0-1) (V1, V2)
+   - local_adaptation [1] : Local adaptation strength (0-1) (V2)
+   
+   Outputs:
+   - output_frame [n,3,h,w] : Tone-mapped output frame
+   - exposure_compensation [1] : Applied exposure compensation (V1, V2)
+   - local_luminance [n,1,h,w] : Local luminance map (V2)
+   
+   Complexity:
+   - ExposureFusionApplierBase: ~15-25 ONNX nodes
+   - ExposureFusionApplierV1: ~30-40 ONNX nodes
+   - ExposureFusionApplierV2: ~50-70 ONNX nodes
+
+================================================================================
+PIPELINE POSITIONING
+================================================================================
+
+Exposure Fusion is a POST-PROCESS STAGE that operates AFTER YUV/RGB conversion.
+
+Pipeline Order:
+1. Demosaic
+2. Black Level Correction
+3. White Balance
+4. CCM (Color Correction Matrix)
+5. Gamma Correction
+6. YUV/RGB Conversion
+7. Exposure Fusion (HDR) ← POST-PROCESS STAGE
+   ├─ ExposureFusionAlgo: Extract exposure info
+   ├─ ExposureFusionLoop: Fuse multiple exposures
+   └─ ExposureFusionApplier: Apply tone mapping
+8. Output
+
+Why Post-Process?
+- Exposure fusion operates on final color-corrected frames
+- Better color accuracy for exposure analysis
+- Tone mapping should be applied after all color corrections
+- Preserves color accuracy during fusion
+
+================================================================================
+CONTROL LOOP ARCHITECTURE
+================================================================================
+
+The control loop uses the ONNX Loop operator for iterative processing:
+
+Loop Structure:
+┌─────────────────────────────────────────────────────────┐
+│                    Loop Operator                         │
+│  ┌─────────────────────────────────────────────────┐  │
+│  │              Loop Body (iterates N times)          │  │
+│  │                                                   │  │
+│  │  1. Calculate adaptive weights based on quality  │  │
+│  │     weight = α * brightness + β * contrast + γ    │  │
+│  │                                                   │  │
+│  │  2. Update weights with fusion strength          │  │
+│  │     w_new = w_old * (1-α) + quality * α           │  │
+│  │                                                   │  │
+│  │  3. Normalize weights                             │  │
+│  │     w_norm = w_new / Σ(w_new)                     │  │
+│  │                                                   │  │
+│  │  4. Blend exposures using weights                 │  │
+│  │     fused = Σ (w_norm[i] * frames[i])             │  │
+│  │                                                   │  │
+│  │  5. Update state for next iteration              │  │
+│  │     state = {w_norm, fused}                        │  │
+│  └─────────────────────────────────────────────────┘  │
+│                                                         │
+│  State Variables (persist across iterations):          │
+│  - weights [m] : Weights for each exposure             │
+│  - fused [n,3,h,w] : Current fused frame               │
+└─────────────────────────────────────────────────────────┘
+
+Weight Calculation:
+  quality = (brightness + contrast + saturation) / 3
+  w_new = w_old * (1-α) + quality * α
+  
+  Where:
+  - α = fusion_strength (0-1)
+  - brightness, contrast, saturation are normalized to [0, 1]
+
+Ghosting Reduction (ExposureFusionLoopV1):
+  - Detect motion between consecutive frames
+  - Suppress ghosting artifacts
+  - Use well-exposed mask to guide fusion
+
+================================================================================
+EXPOSURE FUSION ALGORITHM
+================================================================================
+
+Exposure Fusion Steps:
+
+1. **Extract Exposure Information**
+   - Calculate brightness per frame
+   - Calculate contrast per frame
+   - Calculate saturation per frame
+   - Calculate quality score
+
+2. **Calculate Weights**
+   - Weight based on quality metrics
+   - Normalize weights to sum to 1
+   - Apply fusion strength
+
+3. **Blend Exposures**
+   - fused = Σ (weights[i] * frames[i])
+   - Weighted average of all exposures
+
+4. **Tone Mapping**
+   - Normalize to [0, 1]
+   - Apply gamma correction
+   - Clip to valid range
+   - Scale to output range
+
+Quality Metrics:
+  brightness = mean(frame)
+  contrast = std(frame)
+  saturation = max(frame) - min(frame)
+  quality = (brightness + contrast + saturation) / 3
+
+Well-Exposed Mask:
+  well_exposed = |brightness - 0.5| < threshold
+  
+  Pixels with brightness close to 0.5 are considered well-exposed.
+
+================================================================================
+TONE MAPPING
+================================================================================
+
+Tone Mapping converts HDR to LDR for display:
+
+Simple Tone Mapping (ExposureFusionApplierBase):
+  normalized = fused / dynamic_range
+  gamma_corrected = normalized^(1/γ)
+  output = clip(gamma_corrected, 0, 1) * 255
+
+Adaptive Tone Mapping (ExposureFusionApplierV1):
+  exposure_comp = target_brightness / current_brightness
+  exposed = fused * exposure_comp
+  normalized = exposed / dynamic_range
+  gamma_corrected = normalized^(1/γ)
+  output = clip(gamma_corrected, 0, 1) * 255
+
+Local Tone Mapping (ExposureFusionApplierV2):
+  exposure_comp = target_brightness / current_brightness
+  exposed = fused * exposure_comp
+  luminance = mean(exposed)
+  local_luminance = blur(luminance)
+  luminance_adapted = (1-α) * luminance + α * local_luminance
+  tone_mapped = exposed / luminance_adapted
+  normalized = tone_mapped / dynamic_range
+  gamma_corrected = normalized^(1/γ)
+  output = clip(gamma_corrected, 0, 1) * 255
+
+Gamma Correction:
+  γ = 2.2 (standard gamma)
+  output = input^(1/γ)
+
+================================================================================
+GHOSTING REDUCTION
+================================================================================
+
+Ghosting occurs when objects move between exposures:
+
+Detection:
+  diff = |frame[i] - frame[i+1]|
+  ghost_mask = diff > threshold
+
+Reduction:
+  - Use well-exposed mask to guide fusion
+  - Suppress weights for ghosted regions
+  - Blend with motion compensation
+
+Benefits:
+  - Reduces ghosting artifacts
+  - Improves fusion quality
+  - Better for dynamic scenes
+
+================================================================================
+FILES CREATED/MODIFIED
+================================================================================
+
+microblocks/exposure_fusion/
+├── __init__.py                        # Exports all 8 classes
+├── exposure_fusion_algo.py            # 3 algorithm implementations
+├── exposure_fusion_loop.py            # 2 control loop implementations
+└── exposure_fusion_applier.py         # 3 applier implementations
+
+Documentation:
+└── EXPOSURE_FUSION_ARCHITECTURE.txt   # This summary
+
+================================================================================
+ARCHITECTURE DIAGRAM
+================================================================================
+
+┌─────────────────────────────────────────────────────────────────────┐
+│                    Exposure Fusion Microblock                       │
+│                                                                     │
+│  ┌──────────────┐    ┌──────────────┐    ┌──────────────┐          │
+│  │   Exposure   │    │   Exposure   │    │   Exposure   │          │
+│  │   Fusion     │    │   Fusion     │    │   Fusion     │          │
+│  │    Algo      │───▶│    Loop      │───▶│   Applier    │          │
+│  │              │    │ (Coordinator) │    │              │          │
+│  │ build_algo() │    │ build_coord()│    │ build_applier│          │
+│  └──────────────┘    └──────────────┘    └──────────────┘          │
+│         │                   │                   │                    │
+│         ▼                   ▼                   ▼                    │
+│   Extract             Fuse + Blend        Apply Tone               │
+│   Exposure Info       Multiple Exposures   Mapping                 │
+│                                                                     │
+│  ┌─────────────────────────────────────────────────────────────┐  │
+│  │                    Control Loop (ONNX Loop)                   │  │
+│  │                                                             │  │
+│  │  ┌─────────────────────────────────────────────────────┐  │  │
+│  │  │              Loop Body (iterates N times)             │  │  │
+│  │  │                                                     │  │  │
+│  │  │  1. Calculate adaptive weights based on quality    │  │  │
+│  │  │  2. Update weights with fusion strength            │  │  │
+│  │  │  3. Normalize weights                              │  │  │
+│  │  │  4. Blend exposures using weights                   │  │  │
+│  │  │  5. Update state for next iteration                │  │  │
+│  │  └─────────────────────────────────────────────────────┘  │  │
+│  └─────────────────────────────────────────────────────────────┘  │
+│                                                                     │
+└─────────────────────────────────────────────────────────────────────┘
+
+================================================================================
+USAGE EXAMPLES
+================================================================================
+
+Complete Pipeline with Exposure Fusion:
+{
+  "stages": {
+    "demosaic": { "class": "demosaic", "inputs": ["bayer"] },
+    "blc": { "class": "blc", "inputs": ["demosaic"] },
+    "awb": { "class": "awb", "inputs": ["blc"] },
+    "ccm": { "class": "ccm", "inputs": ["awb"] },
+    "gamma": { "class": "gamma", "inputs": ["ccm"] },
+    "yuv": { "class": "yuv", "inputs": ["gamma"] },
+    "exposure_fusion_algo": {
+      "class": "exposure_fusion_algo_base",
+      "inputs": ["yuv"]
+    },
+    "exposure_fusion_loop": {
+      "class": "exposure_fusion_loop_base",
+      "inputs": ["exposure_fusion_algo"]
+    },
+    "exposure_fusion_applier": {
+      "class": "exposure_fusion_applier_base",
+      "inputs": ["exposure_fusion_loop"]
+    }
+  }
+}
+
+Algorithm Variants:
+- ExposureFusionAlgoBase: Simple exposure analysis
+- ExposureFusionAlgoV1: Quality metrics
+- ExposureFusionAlgoV2: Pixel-level analysis
+
+Control Loop Variants:
+- ExposureFusionLoopBase: Simple fusion
+- ExposureFusionLoopV1: Ghosting reduction
+
+Applier Variants:
+- ExposureFusionApplierBase: Simple tone mapping
+- ExposureFusionApplierV1: Adaptive tone mapping
+- ExposureFusionApplierV2: Local tone mapping
+
+================================================================================
+PERFORMANCE CHARACTERISTICS
+================================================================================
+
+ExposureFusionAlgoBase:
+- ONNX Nodes: 20-30
+- Use Case: Real-time exposure analysis
+
+ExposureFusionAlgoV1:
+- ONNX Nodes: 40-50
+- Use Case: High-quality exposure analysis
+
+ExposureFusionAlgoV2:
+- ONNX Nodes: 60-80
+- Use Case: Professional exposure analysis
+
+ExposureFusionLoopBase:
+- ONNX Nodes: 50-70
+- Use Case: Real-time exposure fusion
+
+ExposureFusionLoopV1:
+- ONNX Nodes: 70-90
+- Use Case: High-quality exposure fusion
+
+ExposureFusionApplierBase:
+- ONNX Nodes: 15-25
+- Use Case: Real-time tone mapping
+
+ExposureFusionApplierV1:
+- ONNX Nodes: 30-40
+- Use Case: High-quality tone mapping
+
+ExposureFusionApplierV2:
+- ONNX Nodes: 50-70
+- Use Case: Professional tone mapping
+
+Total Complexity (Algo + Loop + Applier):
+- Base: ~85-125 ONNX nodes
+- V1: ~140-180 ONNX nodes
+- V2: ~175-240 ONNX nodes
+
+================================================================================
+KEY BENEFITS
+================================================================================
+
+✅ Proper Separation of Concerns
+   - Algo: Extract exposure information
+   - Coordinator: Sensor fusion + iterative blending
+   - Applier: Apply tone mapping
+
+✅ Modular Architecture
+   - Each component can be independently optimized
+   - Easy to swap algorithms
+   - Clear interfaces between components
+
+✅ Iterative Fusion
+   - ONNX Loop operator for iterative processing
+   - Maintains state across iterations
+   - Configurable fusion strength
+
+✅ Quality-Based Weighting
+   - Adaptive weights based on quality metrics
+   - Brightness, contrast, saturation
+   - Well-exposed mask
+
+✅ Ghosting Reduction
+   - Motion detection between frames
+   - Ghosting suppression
+   - Better for dynamic scenes
+
+✅ Flexible Tone Mapping
+   - Simple gamma correction
+   - Adaptive exposure compensation
+   - Local luminance adaptation
+
+✅ Post-Process Positioning
+   - Operates after YUV/RGB conversion
+   - Preserves color accuracy
+   - Better exposure analysis on color frames
+
+================================================================================
+CONCLUSION
+================================================================================
+
+✅ Implemented with proper separation of concerns
+✅ 8 classes across 3 categories (Algo, Loop, Applier)
+✅ Control loop implemented in build_coordinator
+✅ Iterative fusion using ONNX Loop
+✅ Quality-based weighting
+✅ Ghosting reduction
+✅ Flexible tone mapping variants
+✅ Post-process stage positioning
+✅ Ready for testing and integration
+
+The new architecture provides a clean, modular approach to exposure
+fusion (HDR) with proper separation between exposure analysis,
+iterative fusion, and tone mapping.
+
+Next Steps:
+- Create structure tests for all 8 classes
+- Create performance audit script
+- Test with ONNX Runtime
+- Integration testing in full ISP pipeline
+
+================================================================================
