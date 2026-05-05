@@ -1,3 +1,20 @@
+from .deshake_pre import (
+    DeshakePre
+)
+
+from .deshake_core_simple import (
+    DeshakeCoreSimple
+)
+
+from .deshake_core_full import (
+    DeshakeCoreFull
+)
+
+from .deshake_post import (
+    DeshakePost
+)
+
+# Legacy classes (kept for backward compatibility)
 from .deshake_algo import (
     DeshakeAlgoBase,
     DeshakeAlgoV1
@@ -46,35 +63,31 @@ from .deshake_coordinator_cpu import (
 )
 
 __all__ = [
-    # Stage 1: Algo Domain (3 classes)
+    # Refined 3-Stage Architecture (4 classes)
+    'DeshakePre',           # Stage 1: Pre-processing (Algo Domain)
+    'DeshakeCoreSimple',    # Stage 2: Core processing without IMU
+    'DeshakeCoreFull',      # Stage 2: Core processing with IMU
+    'DeshakePost',          # Stage 3: Post-processing (Applier Domain)
+    
+    # Legacy Classes (12 classes)
     'DeshakeAlgoBase',
     'DeshakeAlgoV1',
     'DeshakeAlgoV2',
-    
-    # Stage 2: Coordinator Domain - Mesh Grid Generation (3 classes)
-    'DeshakeMeshGridBase',
-    'DeshakeMeshGridSimple',
-    'DeshakeMeshGridFull',
-    
-    # Stage 3: Applier Domain - Grid Mapping (2 classes)
-    'DeshakeApplier',
-    'DeshakeApplierV2',
-    
-    # Legacy Control Loops (2 classes)
     'DeshakeLoopBase',
     'DeshakeLoopV1',
     'DeshakeLoopV2',
-    
-    # Universal Rotation Wrapper (2 classes)
+    'DeshakeApplier',
+    'DeshakeApplierV2',
+    'DeshakeMeshGridBase',
+    'DeshakeMeshGridSimple',
+    'DeshakeMeshGridFull',
     'RotationState',
     'RotationTrace',
-    
-    # Stateful CPU Coordinator (1 class)
     'DeshakeCoordinatorCPU',
 ]
 
 # Total: 16 classes
-# Industrial-Level API:
-# Stage 1: Algo Domain → Output homography [3,3]
-# Stage 2: Coordinator Domain → Output mesh_grid [mesh_h,mesh_w,2]
-# Stage 3: Applier Domain → Apply grid mapping to frame
+# Refined 3-Stage Architecture:
+# Stage 1: DeshakePre → Calculate homography + GDC from VCM
+# Stage 2: DeshakeCore → Generate mesh grid (Simple/Full)
+# Stage 3: DeshakePost → Apply grid mapping to frame
