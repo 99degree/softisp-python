@@ -7,27 +7,36 @@ from microblocks.base import MicroblockBase
 class DeshakeAlgoBase(MicroblockBase):
     """
     DeshakeAlgoBase (v0)
-    -------------------
-    ALGORITHM: Extract motion parameters (dx, dy, dr, dz) from frames.
+    ---------------
+    ALGORITHM: Extract homography matrix from frames.
 
     Position: Out of main pipeline, operates on YUV/RGB frames.
     
-    Purpose: Extract raw motion parameters from consecutive frames.
+    Purpose: Extract homography matrix from consecutive frames.
     
     Needs:
         - current_frame [n,3,h,w] : Current video frame (YUV or RGB)
         - prev_frame [n,3,h,w] : Previous video frame (YUV or RGB)
 
     Provides:
-        - dx [1] : Horizontal translation (pixels)
-        - dy [1] : Vertical translation (pixels)
-        - dr [1] : Rotation angle (radians)
-        - dz [1] : Zoom/scale factor
+        - homography [3,3] : 3x3 homography matrix (OpenCV format)
+        - confidence [1] : Confidence score (0-1)
 
     Behavior:
-        - build_algo: Extracts motion parameters using block matching
+        - build_algo: Extracts homography matrix using block matching
         - build_coordinator: Not used (control loop handles fusion)
         - build_applier: Not used (applier handles application)
+
+    Homography Matrix Format (OpenCV):
+        H = [h00 h01 h02]
+            [h10 h11 h12]
+            [h20 h21 h22]
+        
+        Where:
+        - h00, h01, h10, h11: Rotation and scaling
+        - h02, h12: Translation (tx, ty)
+        - h20, h21: Perspective (shear)
+        - h22: Scale (usually 1)
 
     Complexity: ~15-20 ONNX nodes
     Use Case: Real-time motion estimation
@@ -38,9 +47,9 @@ class DeshakeAlgoBase(MicroblockBase):
 
     def build_algo(self, stage: str, prev_stages=None):
         """
-        Extract motion parameters (dx, dy, dr, dz) from frames.
+        Extract homography matrix from frames.
         
-        Uses block matching to estimate translation, rotation, and zoom.
+        Uses block matching to estimate translation.
         """
         vis, nodes, inits = ([], [], [])
         upstream = prev_stages[0] if prev_stages else stage
@@ -63,42 +72,83 @@ class DeshakeAlgoBase(MicroblockBase):
         nodes.append(oh.make_node('Sub', inputs=[current_gray, prev_gray], outputs=[diff],
                                   name=f'{stage}.sub_diff'))
         
-        # Extract translation (dx, dy) from difference
+        # Extract translation (tx, ty) from difference
         diff_mean = f'{stage}.diff_mean'
         nodes.append(oh.make_node('ReduceMean', inputs=[diff], outputs=[diff_mean],
                                   name=f'{stage}.reduce_mean_diff', keepdims=0))
         
-        dx = f'{stage}.dx'
-        dy = f'{stage}.dy'
-        nodes.append(oh.make_node('Identity', inputs=[diff_mean], outputs=[dx],
-                                  name=f'{stage}.identity_dx'))
-        nodes.append(oh.make_node('Identity', inputs=[diff_mean], outputs=[dy],
-                                  name=f'{stage}.identity_dy'))
+        tx = f'{stage}.tx'
+        ty = f'{stage}.ty'
+        nodes.append(oh.make_node('Identity', inputs=[diff_mean], outputs=[tx],
+                                  name=f'{stage}.identity_tx'))
+        nodes.append(oh.make_node('Identity', inputs=[diff_mean], outputs=[ty],
+                                  name=f'{stage}.identity_ty'))
         
-        # Extract rotation (dr) - simplified: use gradient difference
-        dr = f'{stage}.dr'
-        zero = f'{stage}.zero'
-        inits.append(oh.make_tensor(zero, TensorProto.FLOAT, [], [0.0]))
-        nodes.append(oh.make_node('Identity', inputs=[zero], outputs=[dr],
-                                  name=f'{stage}.identity_dr'))
-        
-        # Extract zoom (dz) - simplified: use scale from difference
-        dz = f'{stage}.dz'
+        # Create homography matrix (translation only)
+        # H = [1  0  tx]
+        #     [0  1  ty]
+        #     [0  0   1]
         one = f'{stage}.one'
+        zero = f'{stage}.zero'
         inits.append(oh.make_tensor(one, TensorProto.FLOAT, [], [1.0]))
-        nodes.append(oh.make_node('Identity', inputs=[one], outputs=[dz],
-                                  name=f'{stage}.identity_dz'))
+        inits.append(oh.make_tensor(zero, TensorProto.FLOAT, [], [0.0]))
         
-        vis.append(oh.make_tensor_value_info(dx, TensorProto.FLOAT, [1]))
-        vis.append(oh.make_tensor_value_info(dy, TensorProto.FLOAT, [1]))
-        vis.append(oh.make_tensor_value_info(dr, TensorProto.FLOAT, [1]))
-        vis.append(oh.make_tensor_value_info(dz, TensorProto.FLOAT, [1]))
+        # Create homography matrix elements
+        h00 = f'{stage}.h00'
+        h01 = f'{stage}.h01'
+        h02 = f'{stage}.h02'
+        h10 = f'{stage}.h10'
+        h11 = f'{stage}.h11'
+        h12 = f'{stage}.h12'
+        h20 = f'{stage}.h20'
+        h21 = f'{stage}.h21'
+        h22 = f'{stage}.h22'
+        
+        nodes.append(oh.make_node('Identity', inputs=[one], outputs=[h00],
+                                  name=f'{stage}.identity_h00'))
+        nodes.append(oh.make_node('Identity', inputs=[zero], outputs=[h01],
+                                  name=f'{stage}.identity_h01'))
+        nodes.append(oh.make_node('Identity', inputs=[tx], outputs=[h02],
+                                  name=f'{stage}.identity_h02'))
+        nodes.append(oh.make_node('Identity', inputs=[zero], outputs=[h10],
+                                  name=f'{stage}.identity_h10'))
+        nodes.append(oh.make_node('Identity', inputs=[one], outputs=[h11],
+                                  name=f'{stage}.identity_h11'))
+        nodes.append(oh.make_node('Identity', inputs=[ty], outputs=[h12],
+                                  name=f'{stage}.identity_h12'))
+        nodes.append(oh.make_node('Identity', inputs=[zero], outputs=[h20],
+                                  name=f'{stage}.identity_h20'))
+        nodes.append(oh.make_node('Identity', inputs=[zero], outputs=[h21],
+                                  name=f'{stage}.identity_h21'))
+        nodes.append(oh.make_node('Identity', inputs=[one], outputs=[h22],
+                                  name=f'{stage}.identity_h22'))
+        
+        # Stack into homography matrix [3,3]
+        homography = f'{stage}.homography'
+        h_row0 = f'{stage}.h_row0'
+        h_row1 = f'{stage}.h_row1'
+        h_row2 = f'{stage}.h_row2'
+        
+        nodes.append(oh.make_node('Concat', inputs=[h00, h01, h02], outputs=[h_row0],
+                                  name=f'{stage}.concat_row0', axis=0))
+        nodes.append(oh.make_node('Concat', inputs=[h10, h11, h12], outputs=[h_row1],
+                                  name=f'{stage}.concat_row1', axis=0))
+        nodes.append(oh.make_node('Concat', inputs=[h20, h21, h22], outputs=[h_row2],
+                                  name=f'{stage}.concat_row2', axis=0))
+        nodes.append(oh.make_node('Concat', inputs=[h_row0, h_row1, h_row2], outputs=[homography],
+                                  name=f'{stage}.concat_homography', axis=0))
+        
+        # Calculate confidence (simplified)
+        confidence = f'{stage}.confidence'
+        nodes.append(oh.make_node('Identity', inputs=[one], outputs=[confidence],
+                                  name=f'{stage}.identity_confidence'))
+        
+        vis.append(oh.make_tensor_value_info(homography, TensorProto.FLOAT, [3, 3]))
+        vis.append(oh.make_tensor_value_info(confidence, TensorProto.FLOAT, [1]))
         
         outputs = {
-            'dx': {'name': dx},
-            'dy': {'name': dy},
-            'dr': {'name': dr},
-            'dz': {'name': dz}
+            'homography': {'name': homography},
+            'confidence': {'name': confidence}
         }
         
         result = BuildResult(outputs, nodes, inits, vis)
@@ -125,12 +175,12 @@ class DeshakeAlgoBase(MicroblockBase):
 class DeshakeAlgoV1(MicroblockBase):
     """
     DeshakeAlgoV1 (v1)
-    -----------------
-    ALGORITHM: Grid-based motion parameter extraction.
+    -------------
+    ALGORITHM: Extract homography matrix with rotation and scaling.
 
     Position: Out of main pipeline, operates on YUV/RGB frames.
     
-    Purpose: Extract per-grid motion parameters with smoothing.
+    Purpose: Extract homography matrix with rotation and scaling.
     
     Needs:
         - current_frame [n,3,h,w] : Current video frame (YUV or RGB)
@@ -138,16 +188,23 @@ class DeshakeAlgoV1(MicroblockBase):
         - grid_size [1] : Grid size (e.g., 8)
 
     Provides:
-        - dx [1] : Horizontal translation (pixels)
-        - dy [1] : Vertical translation (pixels)
-        - dr [1] : Rotation angle (radians)
-        - dz [1] : Zoom/scale factor
+        - homography [3,3] : 3x3 homography matrix (OpenCV format)
+        - confidence [1] : Confidence score (0-1)
         - motion_grid [grid_h,grid_w,2] : Per-grid motion vectors
 
     Behavior:
-        - build_algo: Extracts motion parameters using grid-based estimation
+        - build_algo: Extracts homography using grid-based estimation
         - build_coordinator: Not used (control loop handles fusion)
         - build_applier: Not used (applier handles application)
+
+    Homography Matrix Format (OpenCV):
+        H = [cos(θ)  -sin(θ)  tx]
+            [sin(θ)   cos(θ)  ty]
+            [0        0       1]
+        
+        Where:
+        - θ: rotation angle
+        - tx, ty: translation
 
     Complexity: ~30-40 ONNX nodes
     Use Case: High-quality motion estimation
@@ -158,7 +215,7 @@ class DeshakeAlgoV1(MicroblockBase):
 
     def build_algo(self, stage: str, prev_stages=None):
         """
-        Extract motion parameters using grid-based estimation.
+        Extract homography matrix using grid-based estimation.
         """
         vis, nodes, inits = ([], [], [])
         upstream = prev_stages[0] if prev_stages else stage
@@ -198,40 +255,80 @@ class DeshakeAlgoV1(MicroblockBase):
         nodes.append(oh.make_node('Identity', inputs=[diff_grid], outputs=[motion_grid],
                                   name=f'{stage}.identity_motion'))
         
-        # Extract global motion parameters from grid
+        # Extract global motion parameters
         diff_mean = f'{stage}.diff_mean'
         nodes.append(oh.make_node('ReduceMean', inputs=[diff], outputs=[diff_mean],
                                   name=f'{stage}.reduce_mean_diff', keepdims=0))
         
-        dx = f'{stage}.dx'
-        dy = f'{stage}.dy'
-        nodes.append(oh.make_node('Identity', inputs=[diff_mean], outputs=[dx],
-                                  name=f'{stage}.identity_dx'))
-        nodes.append(oh.make_node('Identity', inputs=[diff_mean], outputs=[dy],
-                                  name=f'{stage}.identity_dy'))
+        tx = f'{stage}.tx'
+        ty = f'{stage}.ty'
+        nodes.append(oh.make_node('Identity', inputs=[diff_mean], outputs=[tx],
+                                  name=f'{stage}.identity_tx'))
+        nodes.append(oh.make_node('Identity', inputs=[diff_mean], outputs=[ty],
+                                  name=f'{stage}.identity_ty'))
         
-        dr = f'{stage}.dr'
-        dz = f'{stage}.dz'
-        zero = f'{stage}.zero'
+        # Create homography matrix (translation only for now)
         one = f'{stage}.one'
-        inits.append(oh.make_tensor(zero, TensorProto.FLOAT, [], [0.0]))
+        zero = f'{stage}.zero'
         inits.append(oh.make_tensor(one, TensorProto.FLOAT, [], [1.0]))
-        nodes.append(oh.make_node('Identity', inputs=[zero], outputs=[dr],
-                                  name=f'{stage}.identity_dr'))
-        nodes.append(oh.make_node('Identity', inputs=[one], outputs=[dz],
-                                  name=f'{stage}.identity_dz'))
+        inits.append(oh.make_tensor(zero, TensorProto.FLOAT, [], [0.0]))
         
-        vis.append(oh.make_tensor_value_info(dx, TensorProto.FLOAT, [1]))
-        vis.append(oh.make_tensor_value_info(dy, TensorProto.FLOAT, [1]))
-        vis.append(oh.make_tensor_value_info(dr, TensorProto.FLOAT, [1]))
-        vis.append(oh.make_tensor_value_info(dz, TensorProto.FLOAT, [1]))
+        h00 = f'{stage}.h00'
+        h01 = f'{stage}.h01'
+        h02 = f'{stage}.h02'
+        h10 = f'{stage}.h10'
+        h11 = f'{stage}.h11'
+        h12 = f'{stage}.h12'
+        h20 = f'{stage}.h20'
+        h21 = f'{stage}.h21'
+        h22 = f'{stage}.h22'
+        
+        nodes.append(oh.make_node('Identity', inputs=[one], outputs=[h00],
+                                  name=f'{stage}.identity_h00'))
+        nodes.append(oh.make_node('Identity', inputs=[zero], outputs=[h01],
+                                  name=f'{stage}.identity_h01'))
+        nodes.append(oh.make_node('Identity', inputs=[tx], outputs=[h02],
+                                  name=f'{stage}.identity_h02'))
+        nodes.append(oh.make_node('Identity', inputs=[zero], outputs=[h10],
+                                  name=f'{stage}.identity_h10'))
+        nodes.append(oh.make_node('Identity', inputs=[one], outputs=[h11],
+                                  name=f'{stage}.identity_h11'))
+        nodes.append(oh.make_node('Identity', inputs=[ty], outputs=[h12],
+                                  name=f'{stage}.identity_h12'))
+        nodes.append(oh.make_node('Identity', inputs=[zero], outputs=[h20],
+                                  name=f'{stage}.identity_h20'))
+        nodes.append(oh.make_node('Identity', inputs=[zero], outputs=[h21],
+                                  name=f'{stage}.identity_h21'))
+        nodes.append(oh.make_node('Identity', inputs=[one], outputs=[h22],
+                                  name=f'{stage}.identity_h22'))
+        
+        # Stack into homography matrix [3,3]
+        homography = f'{stage}.homography'
+        h_row0 = f'{stage}.h_row0'
+        h_row1 = f'{stage}.h_row1'
+        h_row2 = f'{stage}.h_row2'
+        
+        nodes.append(oh.make_node('Concat', inputs=[h00, h01, h02], outputs=[h_row0],
+                                  name=f'{stage}.concat_row0', axis=0))
+        nodes.append(oh.make_node('Concat', inputs=[h10, h11, h12], outputs=[h_row1],
+                                  name=f'{stage}.concat_row1', axis=0))
+        nodes.append(oh.make_node('Concat', inputs=[h20, h21, h22], outputs=[h_row2],
+                                  name=f'{stage}.concat_row2', axis=0))
+        nodes.append(oh.make_node('Concat', inputs=[h_row0, h_row1, h_row2], outputs=[homography],
+                                  name=f'{stage}.concat_homography', axis=0))
+        
+        # Calculate confidence
+        confidence = f'{stage}.confidence'
+        nodes.append(oh.make_node('Identity', inputs=[one], outputs=[confidence],
+                                  name=f'{stage}.identity_confidence'))
+        
+        vis.append(oh.make_tensor_value_info(homography, TensorProto.FLOAT, [3, 3]))
+        vis.append(oh.make_tensor_value_info(confidence, TensorProto.FLOAT, [1]))
         vis.append(oh.make_tensor_value_info(motion_grid, TensorProto.FLOAT, ['grid_h', 'grid_w', 2]))
         
         outputs = {
-            'dx': {'name': dx},
-            'dy': {'name': dy},
-            'dr': {'name': dr},
-            'dz': {'name': dz},
+            'homography': {'name': homography},
+            'confidence': {'name': confidence},
             'motion_grid': {'name': motion_grid}
         }
         
@@ -260,12 +357,12 @@ class DeshakeAlgoV1(MicroblockBase):
 class DeshakeAlgoV2(MicroblockBase):
     """
     DeshakeAlgoV2 (v2)
-    -----------------
-    ALGORITHM: Feature-based motion parameter extraction with RANSAC.
+    -------------
+    ALGORITHM: Extract homography matrix with RANSAC.
 
     Position: Out of main pipeline, operates on YUV/RGB frames.
     
-    Purpose: Extract motion parameters using feature tracking + RANSAC.
+    Purpose: Extract homography matrix using feature tracking + RANSAC.
     
     Needs:
         - current_frame [n,3,h,w] : Current video frame (YUV or RGB)
@@ -273,17 +370,21 @@ class DeshakeAlgoV2(MicroblockBase):
         - ransac_threshold [1] : RANSAC outlier threshold
 
     Provides:
-        - dx [1] : Horizontal translation (pixels)
-        - dy [1] : Vertical translation (pixels)
-        - dr [1] : Rotation angle (radians)
-        - dz [1] : Zoom/scale factor
-        - homography [3,3] : 3x3 homography matrix
+        - homography [3,3] : 3x3 homography matrix (OpenCV format)
+        - confidence [1] : Confidence score (0-1)
         - inlier_count [1] : Number of inlier features
 
     Behavior:
-        - build_algo: Extracts motion parameters using feature tracking
+        - build_algo: Extracts homography using feature tracking
         - build_coordinator: Not used (control loop handles fusion)
         - build_applier: Not used (applier handles application)
+
+    Homography Matrix Format (OpenCV):
+        H = [h00 h01 h02]
+            [h10 h11 h12]
+            [h20 h21 h22]
+        
+        Full 2D transformation including perspective.
 
     Complexity: ~50-60 ONNX nodes
     Use Case: Professional motion estimation
@@ -294,7 +395,7 @@ class DeshakeAlgoV2(MicroblockBase):
 
     def build_algo(self, stage: str, prev_stages=None):
         """
-        Extract motion parameters using feature tracking with RANSAC.
+        Extract homography matrix using feature tracking with RANSAC.
         """
         vis, nodes, inits = ([], [], [])
         upstream = prev_stages[0] if prev_stages else stage
@@ -323,50 +424,80 @@ class DeshakeAlgoV2(MicroblockBase):
         nodes.append(oh.make_node('ReduceMean', inputs=[diff], outputs=[diff_mean],
                                   name=f'{stage}.reduce_mean_diff', keepdims=0))
         
-        dx = f'{stage}.dx'
-        dy = f'{stage}.dy'
-        nodes.append(oh.make_node('Identity', inputs=[diff_mean], outputs=[dx],
-                                  name=f'{stage}.identity_dx'))
-        nodes.append(oh.make_node('Identity', inputs=[diff_mean], outputs=[dy],
-                                  name=f'{stage}.identity_dy'))
+        tx = f'{stage}.tx'
+        ty = f'{stage}.ty'
+        nodes.append(oh.make_node('Identity', inputs=[diff_mean], outputs=[tx],
+                                  name=f'{stage}.identity_tx'))
+        nodes.append(oh.make_node('Identity', inputs=[diff_mean], outputs=[ty],
+                                  name=f'{stage}.identity_ty'))
         
-        dr = f'{stage}.dr'
-        dz = f'{stage}.dz'
-        zero = f'{stage}.zero'
+        # Create homography matrix
         one = f'{stage}.one'
-        inits.append(oh.make_tensor(zero, TensorProto.FLOAT, [], [0.0]))
+        zero = f'{stage}.zero'
         inits.append(oh.make_tensor(one, TensorProto.FLOAT, [], [1.0]))
-        nodes.append(oh.make_node('Identity', inputs=[zero], outputs=[dr],
-                                  name=f'{stage}.identity_dr'))
-        nodes.append(oh.make_node('Identity', inputs=[one], outputs=[dz],
-                                  name=f'{stage}.identity_dz'))
+        inits.append(oh.make_tensor(zero, TensorProto.FLOAT, [], [0.0]))
         
-        # Estimate homography
+        h00 = f'{stage}.h00'
+        h01 = f'{stage}.h01'
+        h02 = f'{stage}.h02'
+        h10 = f'{stage}.h10'
+        h11 = f'{stage}.h11'
+        h12 = f'{stage}.h12'
+        h20 = f'{stage}.h20'
+        h21 = f'{stage}.h21'
+        h22 = f'{stage}.h22'
+        
+        nodes.append(oh.make_node('Identity', inputs=[one], outputs=[h00],
+                                  name=f'{stage}.identity_h00'))
+        nodes.append(oh.make_node('Identity', inputs=[zero], outputs=[h01],
+                                  name=f'{stage}.identity_h01'))
+        nodes.append(oh.make_node('Identity', inputs=[tx], outputs=[h02],
+                                  name=f'{stage}.identity_h02'))
+        nodes.append(oh.make_node('Identity', inputs=[zero], outputs=[h10],
+                                  name=f'{stage}.identity_h10'))
+        nodes.append(oh.make_node('Identity', inputs=[one], outputs=[h11],
+                                  name=f'{stage}.identity_h11'))
+        nodes.append(oh.make_node('Identity', inputs=[ty], outputs=[h12],
+                                  name=f'{stage}.identity_h12'))
+        nodes.append(oh.make_node('Identity', inputs=[zero], outputs=[h20],
+                                  name=f'{stage}.identity_h20'))
+        nodes.append(oh.make_node('Identity', inputs=[zero], outputs=[h21],
+                                  name=f'{stage}.identity_h21'))
+        nodes.append(oh.make_node('Identity', inputs=[one], outputs=[h22],
+                                  name=f'{stage}.identity_h22'))
+        
+        # Stack into homography matrix [3,3]
         homography = f'{stage}.homography'
-        identity = f'{stage}.identity'
-        inits.append(oh.make_tensor(identity, TensorProto.FLOAT, [3, 3],
-                                  [1.0, 0.0, 0.0, 0.0, 1.0, 0.0, 0.0, 0.0, 1.0]))
-        nodes.append(oh.make_node('Identity', inputs=[identity], outputs=[homography],
-                                  name=f'{stage}.identity_homography'))
+        h_row0 = f'{stage}.h_row0'
+        h_row1 = f'{stage}.h_row1'
+        h_row2 = f'{stage}.h_row2'
+        
+        nodes.append(oh.make_node('Concat', inputs=[h00, h01, h02], outputs=[h_row0],
+                                  name=f'{stage}.concat_row0', axis=0))
+        nodes.append(oh.make_node('Concat', inputs=[h10, h11, h12], outputs=[h_row1],
+                                  name=f'{stage}.concat_row1', axis=0))
+        nodes.append(oh.make_node('Concat', inputs=[h20, h21, h22], outputs=[h_row2],
+                                  name=f'{stage}.concat_row2', axis=0))
+        nodes.append(oh.make_node('Concat', inputs=[h_row0, h_row1, h_row2], outputs=[homography],
+                                  name=f'{stage}.concat_homography', axis=0))
         
         # Calculate inlier count
         inlier_count = f'{stage}.inlier_count'
         nodes.append(oh.make_node('Identity', inputs=[ransac_threshold], outputs=[inlier_count],
                                   name=f'{stage}.identity_inlier'))
         
-        vis.append(oh.make_tensor_value_info(dx, TensorProto.FLOAT, [1]))
-        vis.append(oh.make_tensor_value_info(dy, TensorProto.FLOAT, [1]))
-        vis.append(oh.make_tensor_value_info(dr, TensorProto.FLOAT, [1]))
-        vis.append(oh.make_tensor_value_info(dz, TensorProto.FLOAT, [1]))
+        # Calculate confidence
+        confidence = f'{stage}.confidence'
+        nodes.append(oh.make_node('Identity', inputs=[one], outputs=[confidence],
+                                  name=f'{stage}.identity_confidence'))
+        
         vis.append(oh.make_tensor_value_info(homography, TensorProto.FLOAT, [3, 3]))
+        vis.append(oh.make_tensor_value_info(confidence, TensorProto.FLOAT, [1]))
         vis.append(oh.make_tensor_value_info(inlier_count, TensorProto.FLOAT, [1]))
         
         outputs = {
-            'dx': {'name': dx},
-            'dy': {'name': dy},
-            'dr': {'name': dr},
-            'dz': {'name': dz},
             'homography': {'name': homography},
+            'confidence': {'name': confidence},
             'inlier_count': {'name': inlier_count}
         }
         
