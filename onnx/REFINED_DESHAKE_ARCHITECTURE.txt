@@ -19,12 +19,15 @@ ADAPTIVE DIMENSION EXTRACTION ✅
 - Default mesh size: 16x16 (configurable via class attribute)
 
 MESH SIZE OPTIONS ✅
-- DeshakeCoreSimple: Adaptive (default 16x16)
-- DeshakeCoreSimple16: Fixed 16x16 (compile-time constant)
-- DeshakeCoreSimple32: Fixed 32x32 (compile-time constant)
-- DeshakeCoreFull: Adaptive (default 16x16)
-- DeshakeCoreFull16: Fixed 16x16 (compile-time constant)
-- DeshakeCoreFull32: Fixed 32x32 (compile-time constant)
+- DeshakeCoreSimple: Base class with configurable mesh size (default 16x16)
+- DeshakeCoreSimple16: Subclass with fixed 16x16 mesh
+- DeshakeCoreSimple32: Subclass with fixed 32x32 mesh
+- DeshakeCoreFull: Base class with configurable mesh size (default 16x16)
+- DeshakeCoreFull16: Subclass with fixed 16x16 mesh
+- DeshakeCoreFull32: Subclass with fixed 32x32 mesh
+
+All variants share the same code base - mesh size is a class attribute.
+Subclasses only override mesh_h and mesh_w attributes.
 
 Choose mesh size based on performance requirements:
 - 16x16: Faster, lower quality (real-time 4K 60fps)
@@ -139,12 +142,14 @@ STAGE 2: DESHAKECORE (Coordinator Domain)
 Purpose: Generate mesh grid from stats (with/without IMU).
 
 Classes:
-- DeshakeCoreSimple: Simple fusion (homography + GDC only), ~40-50 ONNX nodes
-- DeshakeCoreSimple16: Simple fusion with 16x16 mesh, ~40-50 ONNX nodes
-- DeshakeCoreSimple32: Simple fusion with 32x32 mesh, ~40-50 ONNX nodes
-- DeshakeCoreFull: Full IMU fusion with temporal smoothing, ~60-80 ONNX nodes
-- DeshakeCoreFull16: Full IMU fusion with 16x16 mesh, ~60-80 ONNX nodes
-- DeshakeCoreFull32: Full IMU fusion with 32x32 mesh, ~60-80 ONNX nodes
+- DeshakeCoreSimple: Base class with configurable mesh size, ~40-50 ONNX nodes
+- DeshakeCoreSimple16: Subclass with 16x16 mesh, ~40-50 ONNX nodes
+- DeshakeCoreSimple32: Subclass with 32x32 mesh, ~40-50 ONNX nodes
+- DeshakeCoreFull: Base class with configurable mesh size, ~60-80 ONNX nodes
+- DeshakeCoreFull16: Subclass with 16x16 mesh, ~60-80 ONNX nodes
+- DeshakeCoreFull32: Subclass with 32x32 mesh, ~60-80 ONNX nodes
+
+All variants share the same code base - mesh size is a class attribute.
 
 Input:
 - homography [3,3] : 3x3 homography matrix from pre-processing

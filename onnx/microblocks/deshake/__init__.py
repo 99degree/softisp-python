@@ -3,26 +3,14 @@ from .deshake_pre import (
 )
 
 from .deshake_core_simple import (
-    DeshakeCoreSimple
-)
-
-from .deshake_core_simple_16 import (
-    DeshakeCoreSimple16
-)
-
-from .deshake_core_simple_32 import (
+    DeshakeCoreSimple,
+    DeshakeCoreSimple16,
     DeshakeCoreSimple32
 )
 
 from .deshake_core_full import (
-    DeshakeCoreFull
-)
-
-from .deshake_core_full_16 import (
-    DeshakeCoreFull16
-)
-
-from .deshake_core_full_32 import (
+    DeshakeCoreFull,
+    DeshakeCoreFull16,
     DeshakeCoreFull32
 )
 
