@@ -8,6 +8,58 @@ import logging
 logging.basicConfig(level=logging.DEBUG)
 
 
+class AlgoPassthrough:
+    """
+    Mixin that provides Identity passthrough for build_algo.
+    
+    Use via multiple inheritance when a microblock's algo path
+    should simply pass through the upstream applier output unchanged:
+    
+        class MyMicroblock(AlgoPassthrough, MicroblockBase):
+            dim = 3
+            ...
+    
+    The mixin's build_algo creates an Identity node that copies
+    prev_stages[0].applier to stage.applier, preserving shape.
+    """
+    def build_algo(self, stage: str, prev_stages=None):
+        upstream = prev_stages[0] if prev_stages and len(prev_stages) > 0 else stage
+        inp = f'{upstream}.applier'
+        out = f'{stage}.applier'
+        dim = getattr(self, 'dim', 4)
+        nodes = [oh.make_node('Identity', inputs=[inp], outputs=[out],
+                              name=f'{stage}_algo_passthrough')]
+        vis = [oh.make_tensor_value_info(out, TensorProto.FLOAT, ['n', dim, 'H', 'W'])]
+        outputs = {'applier': {'name': out, 'type': TensorProto.FLOAT, 'shape': ['n', dim, 'H', 'W']}}
+        return BuildResult(outputs, nodes, [], vis).appendInput(inp, type=TensorProto.FLOAT)
+
+
+class ApplierPassthrough:
+    """
+    Mixin that provides Identity passthrough for build_applier.
+    
+    Use via multiple inheritance when a microblock's applier path
+    should simply pass through the upstream applier output unchanged:
+    
+        class MyMicroblock(ApplierPassthrough, MicroblockBase):
+            dim = 3
+            ...
+    
+    The mixin's build_applier creates an Identity node that copies
+    prev_stages[0].applier to stage.applier, preserving shape.
+    """
+    def build_applier(self, stage: str, prev_stages=None):
+        upstream = prev_stages[0] if prev_stages and len(prev_stages) > 0 else stage
+        inp = f'{upstream}.applier'
+        out = f'{stage}.applier'
+        dim = getattr(self, 'dim', 4)
+        nodes = [oh.make_node('Identity', inputs=[inp], outputs=[out],
+                              name=f'{stage}_applier_passthrough')]
+        vis = [oh.make_tensor_value_info(out, TensorProto.FLOAT, ['n', dim, 'H', 'W'])]
+        outputs = {'applier': {'name': out, 'type': TensorProto.FLOAT, 'shape': ['n', dim, 'H', 'W']}}
+        return BuildResult(outputs, nodes, [], vis).appendInput(inp, type=TensorProto.FLOAT)
+
+
 class BuildResult:
     """
     Container for a microblock build result. Holds raw references (_ref_*)
