@@ -6,8 +6,24 @@ from .deshake_core_simple import (
     DeshakeCoreSimple
 )
 
+from .deshake_core_simple_16 import (
+    DeshakeCoreSimple16
+)
+
+from .deshake_core_simple_32 import (
+    DeshakeCoreSimple32
+)
+
 from .deshake_core_full import (
     DeshakeCoreFull
+)
+
+from .deshake_core_full_16 import (
+    DeshakeCoreFull16
+)
+
+from .deshake_core_full_32 import (
+    DeshakeCoreFull32
 )
 
 from .deshake_post import (
@@ -63,11 +79,21 @@ from .deshake_coordinator_cpu import (
 )
 
 __all__ = [
-    # Refined 3-Stage Architecture (4 classes)
-    'DeshakePre',           # Stage 1: Pre-processing (Algo Domain)
-    'DeshakeCoreSimple',    # Stage 2: Core processing without IMU
-    'DeshakeCoreFull',      # Stage 2: Core processing with IMU
-    'DeshakePost',          # Stage 3: Post-processing (Applier Domain)
+    # Refined 3-Stage Architecture (8 classes)
+    
+    # Stage 1: Pre-processing (Algo Domain)
+    'DeshakePre',           # Calculate homography + GDC from VCM
+    
+    # Stage 2: Core processing (Coordinator Domain)
+    'DeshakeCoreSimple',    # Core processing without IMU (adaptive mesh size)
+    'DeshakeCoreSimple16',  # Core processing without IMU (16x16 mesh)
+    'DeshakeCoreSimple32',  # Core processing without IMU (32x32 mesh)
+    'DeshakeCoreFull',      # Core processing with IMU (adaptive mesh size)
+    'DeshakeCoreFull16',    # Core processing with IMU (16x16 mesh)
+    'DeshakeCoreFull32',    # Core processing with IMU (32x32 mesh)
+    
+    # Stage 3: Post-processing (Applier Domain)
+    'DeshakePost',          # Apply grid mapping to frame
     
     # Legacy Classes (12 classes)
     'DeshakeAlgoBase',
@@ -86,8 +112,16 @@ __all__ = [
     'DeshakeCoordinatorCPU',
 ]
 
-# Total: 16 classes
+# Total: 20 classes
 # Refined 3-Stage Architecture:
 # Stage 1: DeshakePre → Calculate homography + GDC from VCM
-# Stage 2: DeshakeCore → Generate mesh grid (Simple/Full)
+# Stage 2: DeshakeCore → Generate mesh grid (Simple/Full, 16x16/32x32)
 # Stage 3: DeshakePost → Apply grid mapping to frame
+#
+# Mesh Size Options:
+# - DeshakeCoreSimple: Adaptive (default 16x16)
+# - DeshakeCoreSimple16: Fixed 16x16 (compile-time constant)
+# - DeshakeCoreSimple32: Fixed 32x32 (compile-time constant)
+# - DeshakeCoreFull: Adaptive (default 16x16)
+# - DeshakeCoreFull16: Fixed 16x16 (compile-time constant)
+# - DeshakeCoreFull32: Fixed 32x32 (compile-time constant)
