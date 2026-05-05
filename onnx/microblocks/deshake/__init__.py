@@ -25,6 +25,23 @@ from .deshake_applier_v2 import (
     DeshakeApplierV2
 )
 
+from .deshake_applier_v3 import (
+    DeshakeApplierV3
+)
+
+from .deshake_grid_generator import (
+    DeshakeGridGenerator
+)
+
+from .rotation_wrapper import (
+    RotationState,
+    RotationTrace
+)
+
+from .deshake_coordinator_cpu import (
+    DeshakeCoordinatorCPU
+)
+
 __all__ = [
     # Algorithms (3 classes)
     'DeshakeAlgoBase',
@@ -36,12 +53,23 @@ __all__ = [
     'DeshakeLoopV1',
     'DeshakeLoopV2',
     
-    # Appliers (3 classes)
+    # Appliers (4 classes)
     'DeshakeApplierBase',
     'DeshakeApplierV1',
     'DeshakeApplierV2',
+    'DeshakeApplierV3',
+    
+    # Grid Generator (1 class)
+    'DeshakeGridGenerator',
+    
+    # Universal Rotation Wrapper (2 classes)
+    'RotationState',
+    'RotationTrace',
+    
+    # Stateful CPU Coordinator (1 class)
+    'DeshakeCoordinatorCPU',
 ]
 
-# Total: 9 classes
-# Architecture: Algo → Coordinator (with GDC fusion) → Applier
-# V2: GoPro-grade with temporal smoothing, rolling shutter, mesh warp
+# Total: 14 classes
+# Architecture: Algo → Coordinator (CPU + ONNX) → Applier
+# V3: Universal rotation wrapper + 16x16 grid generator
