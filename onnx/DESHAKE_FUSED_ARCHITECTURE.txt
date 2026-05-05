@@ -1,0 +1,428 @@
+================================================================================
+DESHAKE FUSED ARCHITECTURE - PROFESSIONAL-GRADE PIPELINE
+================================================================================
+
+STATUS: IMPLEMENTED WITH GDC + DESHAKE FUSION ✅
+
+Professional-grade architecture that decouples "Intelligence" from "Math"
+by separating Algo, Coordinator, and Applier stages. This allows the Algo
+to run on NPU while the Applier runs on GPU/Warp Engine.
+
+================================================================================
+3-STAGE ARCHITECTURE
+================================================================================
+
+┌─────────────┐    ┌──────────────┐    ┌─────────────┐
+│   Deshake   │    │   Deshake    │    │   Deshake   │
+│    Algo     │───▶│    Loop      │───▶│   Applier   │
+│             │    │ (Coordinator) │    │             │
+└─────────────┘    └──────────────┘    └─────────────┘
+     │                   │                    |
+     ▼                   ▼                    ▼
+ Extract           Fuse + Smooth         Apply Fused
+ Homography H      (IMU + GDC)           Grid
+     │                   │                    |
+     │                   ▼                    ▼
+     │            Generate Fused        GridSample
+     │            Coordinate Grid        (One Pass)
+     │            (GDC + Deshake)
+     │
+     └──▶ Output: homography [3,3]
+
+================================================================================
+STAGE 1: ALGO (Feature/Motion Estimator)
+================================================================================
+
+Purpose: Extract homography matrix from frames (Intelligence)
+
+Input:
+- current_frame [n,3,h,w] : Current video frame (YUV or RGB)
+- prev_frame [n,3,h,w] : Previous video frame (YUV or RGB)
+
+Output:
+- homography [3,3] : 3x3 homography matrix (OpenCV format)
+- confidence [1] : Confidence score (0-1)
+
+Classes:
+- DeshakeAlgoBase: Simple block matching (~15-20 ONNX nodes)
+- DeshakeAlgoV1: Grid-based motion estimation (~30-40 ONNX nodes)
+- DeshakeAlgoV2: Feature-based with RANSAC (~50-60 ONNX nodes)
+
+Hardware: NPU (Neural Processing Unit)
+
+================================================================================
+STAGE 2: COORDINATOR (Coefficient Fuser)
+================================================================================
+
+Purpose: Fuse GDC and Deshake into single coordinate grid (Math)
+
+Input:
+- frame_homography [3,3] : Frame-based homography matrix
+- gdc_coeffs [4] : GDC coefficients [k1, k2, p1, p2]
+- imu_dx [1] : IMU horizontal acceleration
+- imu_dy [1] : IMU vertical acceleration
+- imu_dr [1] : IMU angular velocity
+- smoothing_factor [1] : Smoothing factor (0-1)
+- iterations [1] : Number of smoothing iterations
+- image_size [2] : [height, width] for grid generation
+
+Output:
+- fused_grid [h,w,2] : Fused coordinate grid for GridSample
+- homography [3,3] : Refined homography matrix
+- velocity [3] : Estimated velocity [vx, vy, vr]
+- acceleration [3] : Estimated acceleration [ax, ay, ar]
+
+Classes:
+- DeshakeLoopBase: Simple smoothing with sensor fusion (~50-60 ONNX nodes)
+- DeshakeLoopV1: Kalman filter for optimal estimation (~70-80 ONNX nodes)
+
+Hardware: CPU / DSP
+
+================================================================================
+COORDINATOR: TRANSFORMATION COMPOSITION
+================================================================================
+
+The coordinator composes transformations in the correct order:
+
+    P_final = T_deshake * T_gdc * P_source
+
+Where:
+- T_gdc: GDC distortion transformation (lens correction)
+- T_deshake: Deshake homography transformation (motion compensation)
+- P_source: Source pixel coordinates
+- P_final: Final pixel coordinates for sampling
+
+Step-by-Step:
+1. Create normalized identity grid [-1, 1] x [-1, 1]
+2. Apply GDC distortion to grid points
+3. Fuse frame homography with IMU data
+4. Apply Deshake homography to distorted points
+5. Output fused grid for GridSample
+
+================================================================================
+GDC DISTORTION MODEL (Brown-Conrady)
+================================================================================
+
+Radial Distortion:
+    r_dist = 1 + k1 * r^2 + k2 * r^4
+    
+    x_radial = x * r_dist
+    y_radial = y * r_dist
+
+Tangential Distortion:
+    x_tan = 2 * p1 * x * y + p2 * (r^2 + 2 * x^2)
+    y_tan = p1 * (r^2 + 2 * y^2) + 2 * p2 * x * y
+
+Final GDC Correction:
+    x_gdc = x_radial + x_tan
+    y_gdc = y_radial + y_tan
+
+Where:
+- k1, k2: Radial distortion coefficients
+- p1, p2: Tangential distortion coefficients
+- r^2 = x^2 + y^2
+
+================================================================================
+DESHAKE HOMOGRAPHY TRANSFORMATION
+================================================================================
+
+Homography Matrix Format (OpenCV):
+    H = [h00 h01 h02]
+        [h10 h11 h12]
+        [h20 h21 h22]
+
+Transformation:
+    [x', y', w']^T = H * [x_gdc, y_gdc, 1]^T
+    
+    x' = h00 * x_gdc + h01 * y_gdc + h02
+    y' = h10 * x_gdc + h11 * y_gdc + h12
+    w' = h20 * x_gdc + h21 * y_gdc + h22
+    
+    x_norm = x' / w'
+    y_norm = y' / w'
+
+================================================================================
+SENSOR FUSION (Loop Body)
+================================================================================
+
+The coordinator fuses frame-based homography with IMU data:
+
+    tx_fused = α * tx_frame + (1-α) * imu_dx
+    ty_fused = α * ty_frame + (1-α) * imu_dy
+    dr_fused = α * dr_frame + (1-α) * imu_dr
+
+Where:
+- α: Smoothing factor (0-1)
+- tx_frame, ty_frame: Translation from frame homography
+- imu_dx, imu_dy, imu_dr: IMU measurements
+
+State Variables:
+- velocity [3]: [vx, vy, vr]
+- acceleration [3]: [ax, ay, ar]
+
+Update Equations:
+    v_new = v_old + motion
+    a_new = v_new - v_old
+    v_smoothed = v_new * smoothing_factor
+
+================================================================================
+STAGE 3: APPLIER (Warp Engine)
+================================================================================
+
+Purpose: Apply fused coordinate grid to stabilize frame (Math)
+
+Input:
+- current_frame [n,3,h,w] : Current video frame (YUV or RGB)
+- fused_grid [h,w,2] : Fused coordinate grid from coordinator
+- gain_map [h,w] : ALSC gain map (V2 only)
+
+Output:
+- stabilized_frame [n,3,h,w] : Stabilized frame (YUV or RGB)
+- valid_mask [n,1,h,w] : Valid region mask (V1, V2)
+
+Classes:
+- DeshakeApplierBase: Simple GridSample (~5-10 ONNX nodes)
+- DeshakeApplierV1: GridSample with valid mask (~10-15 ONNX nodes)
+- DeshakeApplierV2: GridSample with gain correction (~15-20 ONNX nodes)
+
+Hardware: GPU / Warp Hardware
+
+================================================================================
+APPLIER: GRID SAMPLE OPERATION
+================================================================================
+
+The applier uses ONNX GridSample operator:
+
+    stabilized = GridSample(current_frame, fused_grid)
+
+Grid Format:
+- fused_grid[..., 0]: x coordinates (normalized to [-1, 1])
+- fused_grid[..., 1]: y coordinates (normalized to [-1, 1])
+
+Parameters:
+- mode: 'bilinear' (bilinear interpolation)
+- padding_mode: 'zeros' (pad with zeros)
+- align_corners: 1 (align corners for better quality)
+
+Valid Mask (V1, V2):
+- Pixels where coordinates are within [-1, 1] are valid
+- Pixels outside this range are invalid (outside image bounds)
+
+Gain Correction (V2):
+    stabilized = warped_frame * gain_map
+    
+    Where gain_map contains per-pixel gain values for ALSC correction.
+
+================================================================================
+WHY THIS ARCHITECTURE IS SUPERIOR
+================================================================================
+
+| Stage | Data Handled | Format | Optimization |
+| :--- | :--- | :--- | :--- |
+| **Algo** | Metadata / Small Pixels | Floats / Tensors | ONNX / NPU |
+| **Coordinator** | Geometric Math | 3x3 or h×w×2 Grid | CPU / DSP |
+| **Applier** | Full 4K Video Data | YUV / RGB Pixels | GPU / Warp Hardware |
+
+Benefits:
+✅ **Hardware Optimization**
+   - Algo runs on NPU (feature extraction)
+   - Coordinator runs on CPU/DSP (geometric math)
+   - Applier runs on GPU/Warp Engine (pixel manipulation)
+
+✅ **Single-Pass Correction**
+   - GDC and Deshake fused into one grid
+   - No blur from multiple passes
+   - Optimal quality
+
+✅ **Modular Design**
+   - Each stage can be optimized independently
+   - Easy to swap algorithms
+   - Clear separation of concerns
+
+✅ **Scalable**
+   - Can add more corrections (rolling shutter, ALSC)
+   - Can use different algorithms for different use cases
+   - Easy to extend
+
+================================================================================
+COMPLETE PIPELINE EXAMPLE
+================================================================================
+
+{
+  "stages": {
+    "demosaic": { "class": "demosaic", "inputs": ["bayer"] },
+    "blc": { "class": "blc", "inputs": ["demosaic"] },
+    "awb": { "class": "awb", "inputs": ["blc"] },
+    "ccm": { "class": "ccm", "inputs": ["awb"] },
+    "gamma": { "class": "gamma", "inputs": ["ccm"] },
+    "yuv": { "class": "yuv", "inputs": ["gamma"] },
+    
+    "deshake_algo": {
+      "class": "deshake_algo_base",
+      "inputs": ["yuv"]
+    },
+    
+    "deshake_loop": {
+      "class": "deshake_loop_base",
+      "inputs": ["deshake_algo"],
+      "params": {
+        "gdc_coeffs": [0.001, -0.0001, 0.0005, -0.0002],
+        "imu_dx": 0.0,
+        "imu_dy": 0.0,
+        "imu_dr": 0.0,
+        "smoothing_factor": 0.8,
+        "iterations": 5,
+        "image_size": [1080, 1920]
+      }
+    },
+    
+    "deshake_applier": {
+      "class": "deshake_applier_base",
+      "inputs": ["yuv", "deshake_loop"]
+    }
+  }
+}
+
+================================================================================
+PERFORMANCE CHARACTERISTICS
+================================================================================
+
+DeshakeAlgoBase:
+- ONNX Nodes: 15-20
+- Output: homography [3,3], confidence [1]
+- Use Case: Real-time motion estimation
+- Hardware: NPU
+
+DeshakeAlgoV1:
+- ONNX Nodes: 30-40
+- Output: homography [3,3], confidence [1], motion_grid
+- Use Case: High-quality motion estimation
+- Hardware: NPU
+
+DeshakeAlgoV2:
+- ONNX Nodes: 50-60
+- Output: homography [3,3], confidence [1], inlier_count
+- Use Case: Professional motion estimation
+- Hardware: NPU
+
+DeshakeLoopBase:
+- ONNX Nodes: 50-60
+- Output: fused_grid [h,w,2], homography [3,3], velocity [3], acceleration [3]
+- Use Case: Real-time sensor fusion + GDC fusion
+- Hardware: CPU/DSP
+
+DeshakeLoopV1:
+- ONNX Nodes: 70-80
+- Output: fused_grid [h,w,2], homography [3,3], covariance [6]
+- Use Case: High-precision sensor fusion + GDC fusion
+- Hardware: CPU/DSP
+
+DeshakeApplierBase:
+- ONNX Nodes: 5-10
+- Input: fused_grid [h,w,2]
+- Output: stabilized_frame [n,3,h,w]
+- Use Case: Real-time motion compensation
+- Hardware: GPU/Warp Engine
+
+DeshakeApplierV1:
+- ONNX Nodes: 10-15
+- Input: fused_grid [h,w,2]
+- Output: stabilized_frame [n,3,h,w], valid_mask
+- Use Case: High-quality motion compensation
+- Hardware: GPU/Warp Engine
+
+DeshakeApplierV2:
+- ONNX Nodes: 15-20
+- Input: fused_grid [h,w,2], gain_map [h,w]
+- Output: stabilized_frame [n,3,h,w], valid_mask
+- Use Case: Professional motion compensation with gain correction
+- Hardware: GPU/Warp Engine
+
+Total Complexity (Algo + Coordinator + Applier):
+- Base: ~70-90 ONNX nodes
+- V1: ~110-135 ONNX nodes
+- V2: ~135-160 ONNX nodes
+
+================================================================================
+KEY BENEFITS
+================================================================================
+
+✅ **Hardware Optimization**
+   - Algo on NPU (feature extraction)
+   - Coordinator on CPU/DSP (geometric math)
+   - Applier on GPU/Warp Engine (pixel manipulation)
+
+✅ **Single-Pass Correction**
+   - GDC and Deshake fused into one grid
+   - No blur from multiple passes
+   - Optimal quality
+
+✅ **Modular Design**
+   - Each stage can be optimized independently
+   - Easy to swap algorithms
+   - Clear separation of concerns
+
+✅ **Scalable**
+   - Can add more corrections (rolling shutter, ALSC)
+   - Can use different algorithms for different use cases
+   - Easy to extend
+
+✅ **OpenCV Compatible**
+   - Standard homography matrix format
+   - Compatible with cv2.findHomography
+   - Compatible with cv2.warpPerspective
+
+✅ **Full 2D Transformation**
+   - Translation, rotation, scaling
+   - Perspective correction
+   - All in single matrix
+
+✅ **Compact Interface**
+   - Single 3x3 matrix for homography
+   - Single h×w×2 grid for fused coordinates
+   - Easy to serialize
+
+✅ **Composable**
+   - Multiple homographies can be composed
+   - H_total = H2 * H1
+   - Easy to chain transformations
+
+================================================================================
+FILES UPDATED
+================================================================================
+
+microblocks/deshake/
+├── __init__.py                    # Exports all 8 classes
+├── deshake_algo.py                # 3 algorithm implementations
+├── deshake_loop.py                # 2 coordinator implementations (with GDC fusion)
+└── deshake_applier.py             # 3 applier implementations (using fused grid)
+
+Documentation:
+└── DESHAKE_FUSED_ARCHITECTURE.txt  # This summary
+
+================================================================================
+CONCLUSION
+================================================================================
+
+✅ Implemented professional-grade 3-stage architecture
+✅ Decoupled "Intelligence" from "Math"
+✅ Fused GDC and Deshake into single coordinate grid
+✅ Single-pass correction (no blur)
+✅ Hardware-optimized (NPU + CPU/DSP + GPU)
+✅ Modular and scalable design
+✅ OpenCV compatible
+✅ Ready for testing and integration
+
+The new architecture provides a professional-grade approach to video
+stabilization with GDC fusion, enabling optimal hardware utilization
+and single-pass correction for maximum quality.
+
+Next Steps:
+- Create structure tests for updated classes
+- Test with ONNX Runtime
+- Integration testing in full ISP pipeline
+- Performance benchmarking
+- Add rolling shutter correction (V2 coordinator)
+- Add ALSC gain correction (V2 applier)
+
+================================================================================

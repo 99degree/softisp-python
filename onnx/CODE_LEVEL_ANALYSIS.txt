@@ -1,0 +1,393 @@
+================================================================================
+CODE-LEVEL ANALYSIS - WHAT'S MISSING IN AUTO EXPOSURE STAGE
+================================================================================
+
+CURRENT IMPLEMENTATION STATUS: Basic structure with placeholder logic
+
+================================================================================
+SPECIFIC CODE GAPS IN build_algo() METHOD
+================================================================================
+
+CURRENT CODE (Lines 18-60):
+```python
+def build_algo(self, stage, prev_stages=None):
+    return self._calculate_stats(stage, prev_stages)
+
+def _calculate_stats(self, stage, prev_stages=None):
+    # ... basic structure ...
+    
+    # Calculate mean brightness of the image
+    mean_node = oh.make_node("ReduceMean", inputs=[input_image], outputs=[stats_name], 
+                          axes=[2, 3], keepdims=0)
+    nodes.append(mean_node)
+    
+    # Create exposure value calculation (simplified)
+    ev_tensor = oh.make_tensor(f"{stage}.exposure_value_const", TensorProto.FLOAT, [1], [1.0])
+    gain_tensor = oh.make_tensor(f"{stage}.gain_const", TensorProto.FLOAT, [1], [1.0])
+```
+
+MISSING CODE:
+
+1. REAL EXPOSURE CALCULATION
+   ❌ No comparison with target brightness
+   ❌ No log2 calculation for exposure value
+   ❌ No gain computation
+   ❌ No handling of edge cases
+
+   SHOULD BE:
+   ```python
+   # Calculate target comparison
+   target_tensor = oh.make_tensor("target_brightness", TensorProto.FLOAT, [1], [0.18])
+   
+   # Calculate brightness ratio
+   ratio_node = oh.make_node("Div", inputs=[stats_name, target_tensor], outputs=["brightness_ratio"])
+   
+   # Calculate exposure value: log2(target/current)
+   log_node = oh.make_node("Log", inputs=["brightness_ratio"], outputs=["log_ratio"])
+   log2_const = oh.make_tensor("log2_const", TensorProto.FLOAT, [1], [0.693147])  # log(2)
+   div_node = oh.make_node("Div", inputs=["log_ratio", "log2_const"], outputs=[ev_name])
+   
+   # Calculate gain: 2^EV
+   exp_node = oh.make_node("Exp", inputs=[ev_name], outputs=[gain_name])
+   ```
+
+2. HISTOGRAM ANALYSIS
+   ❌ No histogram calculation
+   ❌ No percentile-based exposure
+   ❌ No weighted brightness calculation
+
+   SHOULD BE:
+   ```python
+   # Calculate histogram
+   hist_node = oh.make_node("Histogram", inputs=[input_image], outputs=["histogram"])
+   
+   # Calculate percentiles
+   p10_node = oh.make_node("ReduceMean", inputs=["histogram"], outputs=["p10"], axes=[0], keepdims=0)
+   p90_node = oh.make_node("ReduceMean", inputs=["histogram"], outputs=["p90"], axes=[0], keepdims=0)
+   ```
+
+3. ERROR HANDLING
+   ❌ No division by zero protection
+   ❌ No invalid value handling
+   ❌ No range limiting
+
+   SHOULD BE:
+   ```python
+   # Add clipping to prevent invalid values
+   clip_node = oh.make_node("Clip", inputs=[ev_name, "min_ev", "max_ev"], outputs=[ev_name_clipped])
+   ```
+
+================================================================================
+SPECIFIC CODE GAPS IN build_applier() METHOD
+================================================================================
+
+CURRENT CODE (Lines 62-85):
+```python
+def build_applier(self, stage, prev_stages=None):
+    # Get coefficients from algorithm stage
+    upstream = prev_stages[0] if prev_stages else stage
+    input_image = f"{upstream}.applier" if prev_stages else f"{stage}.input"
+    coeffs_source = f"{upstream}.exposure_value" if prev_stages else f"{stage}.exposure_value"
+    
+    # Apply exposure compensation (simplified)
+    mul_node = oh.make_node("Mul", inputs=[input_image, coeffs_source], outputs=[output_image])
+```
+
+MISSING CODE:
+
+1. PROPER EXPOSURE APPLICATION
+   ❌ No proper exposure compensation formula
+   ❌ No handling of different exposure ranges
+   ❌ No gamma correction consideration
+
+   SHOULD BE:
+   ```python
+   # Apply exposure compensation: output = input * 2^EV
+   # First convert EV to gain factor
+   exp_node = oh.make_node("Exp", inputs=[coeffs_source], outputs=["gain_factor"])
+   
+   # Apply gain to image
+   mul_node = oh.make_node("Mul", inputs=[input_image, "gain_factor"], outputs=[output_image])
+   
+   # Clip to valid range
+   clip_node = oh.make_node("Clip", inputs=[output_image, "zero", "one"], outputs=[output_clipped])
+   ```
+
+2. MULTI-CHANNEL HANDLING
+   ❌ No per-channel exposure adjustment
+   ❌ No color preservation during exposure
+
+   SHOULD BE:
+   ```python
+   # For RGB, apply same exposure to all channels
+   # For YUV, apply only to Y channel
+   if input_format == "YUV":
+       # Extract Y channel
+       y_slice = oh.make_node("Slice", inputs=[input_image, ...], outputs=["y_channel"])
+       # Apply exposure to Y only
+       y_exposed = oh.make_node("Mul", inputs=["y_channel", "gain_factor"], outputs=["y_exposed"])
+       # Recombine with UV channels
+       combine = oh.make_node("Concat", inputs=["y_exposed", "u_channel", "v_channel"], outputs=[output_image])
+   ```
+
+================================================================================
+SPECIFIC CODE GAPS IN AutoExposureStats CLASS
+================================================================================
+
+CURRENT CODE (Lines 87-95):
+```python
+class AutoExposureStats(AutoExposureBase):
+    """Statistics-based auto exposure approach"""
+    name = "autoexposure_stats"
+    version = "v1"
+```
+
+MISSING CODE:
+
+1. RGB-SPECIFIC OPTIMIZATIONS
+   ❌ No color-aware exposure calculation
+   ❌ No channel-specific analysis
+   ❌ No white balance consideration
+
+   SHOULD BE:
+   ```python
+   class AutoExposureStats(AutoExposureBase):
+       """Statistics-based auto exposure approach"""
+       name = "autoexposure_stats"
+       version = "v1"
+       
+       def _calculate_stats(self, stage, prev_stages=None):
+           # RGB-specific analysis
+           # Calculate per-channel brightness
+           r_mean = oh.make_node("ReduceMean", inputs=[input_r_channel], outputs=["r_brightness"])
+           g_mean = oh.make_node("ReduceMean", inputs=[input_g_channel], outputs=["g_brightness"])
+           b_mean = oh.make_node("ReduceMean", inputs=[input_b_channel], outputs=["b_brightness"])
+           
+           # Weighted combination (luminance)
+           weighted_brightness = oh.make_node("Add", inputs=[
+               oh.make_node("Mul", inputs=["r_brightness", "r_weight"], outputs=["r_weighted"]),
+               oh.make_node("Mul", inputs=["g_brightness", "g_weight"], outputs=["g_weighted"]),
+               oh.make_node("Mul", inputs=["b_brightness", "b_weight"], outputs=["b_weighted"])
+           ], outputs=["weighted_brightness"])
+   ```
+
+================================================================================
+SPECIFIC CODE GAPS IN AutoExposureYUV CLASS
+================================================================================
+
+CURRENT CODE (Lines 97-145):
+```python
+class AutoExposureYUV(AutoExposureBase):
+    """YUV-based auto exposure approach"""
+    name = "autoexposure_yuv"
+    version = "v1"
+    
+    def _calculate_stats(self, stage, prev_stages=None):
+        # ... basic Y channel extraction ...
+        y_channel = f"{stage}.y_channel"
+        slice_node = oh.make_node("Slice", inputs=[input_yuv, "zero_const", "one_const", "axis_const"], 
+                                 outputs=[y_channel])
+```
+
+MISSING CODE:
+
+1. YUV-SPECIFIC OPTIMIZATIONS
+   ❌ No proper Y channel extraction
+   ❌ No chrominance preservation
+   ❌ No YUV-specific exposure calculation
+
+   SHOULD BE:
+   ```python
+   class AutoExposureYUV(AutoExposureBase):
+       """YUV-based auto exposure approach"""
+       name = "autoexposure_yuv"
+       version = "v1"
+       
+       def _calculate_stats(self, stage, prev_stages=None):
+           # Extract Y channel properly
+           y_channel = f"{stage}.y_channel"
+           u_channel = f"{stage}.u_channel"
+           v_channel = f"{stage}.v_channel"
+           
+           # Split YUV channels
+           split_node = oh.make_node("Split", inputs=[input_yuv], outputs=[y_channel, u_channel, v_channel], axis=1)
+           
+           # Calculate brightness from Y channel only
+           y_mean = oh.make_node("ReduceMean", inputs=[y_channel], outputs=[stats_name], axes=[2, 3], keepdims=0)
+           
+           # Preserve UV channels unchanged
+           # ... exposure calculation based on Y only ...
+   ```
+
+================================================================================
+MISSING CONFIGURATION SYSTEM
+================================================================================
+
+CURRENT CODE: No configuration system
+
+MISSING CODE:
+
+1. CONFIGURATION PARAMETERS
+   ❌ No exposure target parameter
+   ❌ No min/max EV limits
+   ❌ No smoothing parameters
+   ❌ No zone weights
+
+   SHOULD BE:
+   ```python
+   class AutoExposureConfig:
+       """Configuration for auto exposure"""
+       def __init__(self):
+           self.target_brightness = 0.18  # 18% gray
+           self.min_ev = -2.0
+           self.max_ev = 2.0
+           self.smoothing_factor = 0.1
+           self.center_weight = 0.7
+           self.zone_weights = [0.5, 0.7, 1.0, 0.7, 0.5]  # 5x5 zones
+   
+   class AutoExposureBase(MicroblockBase):
+       def __init__(self, config=None):
+           self.config = config or AutoExposureConfig()
+   ```
+
+================================================================================
+MISSING ERROR HANDLING
+================================================================================
+
+CURRENT CODE: No error handling
+
+MISSING CODE:
+
+1. INPUT VALIDATION
+   ❌ No input shape validation
+   ❌ No value range checking
+   ❌ No invalid input handling
+
+   SHOULD BE:
+   ```python
+   def _validate_input(self, input_image):
+       """Validate input image"""
+       if input_image is None:
+           raise ValueError("Input image cannot be None")
+       
+       # Check shape
+       if len(input_image.shape) != 4:
+           raise ValueError(f"Input must be 4D tensor, got {len(input_image.shape)}D")
+       
+       # Check value range
+       if np.any(input_image < 0) or np.any(input_image > 1):
+           raise ValueError("Input values must be in [0, 1] range")
+   ```
+
+2. EDGE CASE HANDLING
+   ❌ No all-black image handling
+   ❌ No all-white image handling
+   ❌ No division by zero protection
+
+   SHOULD BE:
+   ```python
+   def _handle_edge_cases(self, brightness):
+       """Handle edge cases"""
+       # All black image
+       if brightness < 0.01:
+           return self.config.max_ev, 2.0 ** self.config.max_ev
+       
+       # All white image
+       if brightness > 0.99:
+           return self.config.min_ev, 2.0 ** self.config.min_ev
+       
+       # Normal case
+       return self._calculate_exposure(brightness)
+   ```
+
+================================================================================
+MISSING TESTING CODE
+================================================================================
+
+CURRENT CODE: Basic structure tests only
+
+MISSING CODE:
+
+1. UNIT TESTS
+   ❌ No exposure calculation tests
+   ❌ No edge case tests
+   ❌ No parameter validation tests
+
+   SHOULD BE:
+   ```python
+   def test_exposure_calculation():
+       """Test exposure calculation"""
+       # Test normal case
+       brightness = 0.5
+       target = 0.18
+       expected_ev = np.log2(target / brightness)
+       assert calculate_exposure(brightness, target) == expected_ev
+   
+   def test_edge_cases():
+       """Test edge cases"""
+       # Test all black
+       assert handle_all_black() == max_ev
+       
+       # Test all white
+       assert handle_all_white() == min_ev
+   ```
+
+2. INTEGRATION TESTS
+   ❌ No full pipeline tests
+   ❌ No real data tests
+   ❌ No performance tests
+
+   SHOULD BE:
+   ```python
+   def test_full_pipeline():
+       """Test full pipeline integration"""
+       # Load real image
+       image = load_test_image()
+       
+       # Run through pipeline
+       result = run_pipeline(image)
+       
+       # Validate output
+       assert result is not None
+       assert result.shape == image.shape
+       assert np.all(result >= 0) and np.all(result <= 1)
+   ```
+
+================================================================================
+SUMMARY OF CODE GAPS
+================================================================================
+
+TOTAL MISSING CODE SECTIONS: 15
+
+Critical Gaps: 5
+- Real exposure calculation logic
+- Proper ONNX operations
+- Error handling
+- Configuration system
+- Testing code
+
+Important Gaps: 6
+- RGB-specific optimizations
+- YUV-specific optimizations
+- Advanced exposure algorithms
+- Performance optimization
+- Monitoring and debugging
+- Documentation
+
+Nice-to-Have Gaps: 4
+- HDR support
+- Multi-frame exposure
+- Face-aware exposure
+- Advanced features
+
+================================================================================
+ESTIMATED IMPLEMENTATION TIME
+================================================================================
+
+Critical Features: 3-5 days
+Important Features: 5-7 days
+Nice-to-Have Features: 7-10 days
+
+TOTAL: 15-22 days for complete production-ready implementation
+
+================================================================================

@@ -101,6 +101,9 @@ class DeshakeCoreFull(MicroblockBase):
     name = 'deshake_core_full'
     family = 'deshake_core'
     version = 'v2'
+    
+    # Default mesh size (can be overridden)
+    default_mesh_size = [16, 16]
 
     def build_algo(self, stage: str, prev_stages=None):
         """
@@ -113,32 +116,36 @@ class DeshakeCoreFull(MicroblockBase):
         gdc_coeffs = f'{upstream}.gdc_coeffs'
         imu_rotation = f'{upstream}.imu_rotation'
         camera_matrix = f'{upstream}.camera_matrix'
-        mesh_size = f'{upstream}.mesh_size'
-        image_size = f'{upstream}.image_size'
+        current_frame = f'{upstream}.current_frame'
         smoothing_alpha = f'{upstream}.smoothing_alpha'
         horizon_leveling = f'{upstream}.horizon_leveling'
         dynamic_zoom = f'{upstream}.dynamic_zoom'
         rolling_shutter = f'{upstream}.rolling_shutter'
         
-        # Extract mesh dimensions
-        mesh_h = f'{stage}.mesh_h'
-        mesh_w = f'{stage}.mesh_w'
-        nodes.append(oh.make_node('Slice', inputs=[mesh_size], outputs=[mesh_h],
-                                  name=f'{stage}.slice_mesh_h',
-                                  starts=[0], ends=[1], axes=[0]))
-        nodes.append(oh.make_node('Slice', inputs=[mesh_size], outputs=[mesh_w],
-                                  name=f'{stage}.slice_mesh_w',
-                                  starts=[1], ends=[2], axes=[0]))
+        # Extract image dimensions from current_frame tensor shape
+        # current_frame shape: [n, 3, h, w]
+        frame_shape = f'{stage}.frame_shape'
+        nodes.append(oh.make_node('Shape', inputs=[current_frame], outputs=[frame_shape],
+                                  name=f'{stage}.shape_frame'))
         
-        # Extract image dimensions
+        # Extract height (index 2) and width (index 3) from shape
         height = f'{stage}.height'
         width = f'{stage}.width'
-        nodes.append(oh.make_node('Slice', inputs=[image_size], outputs=[height],
-                                  name=f'{stage}.slice_height',
-                                  starts=[0], ends=[1], axes=[0]))
-        nodes.append(oh.make_node('Slice', inputs=[image_size], outputs=[width],
-                                  name=f'{stage}.slice_width',
-                                  starts=[1], ends=[2], axes=[0]))
+        two = f'{stage}.two'
+        three = f'{stage}.three'
+        inits.append(oh.make_tensor(two, TensorProto.INT64, [], [2]))
+        inits.append(oh.make_tensor(three, TensorProto.INT64, [], [3]))
+        
+        nodes.append(oh.make_node('Gather', inputs=[frame_shape, two], outputs=[height],
+                                  name=f'{stage}.gather_height'))
+        nodes.append(oh.make_node('Gather', inputs=[frame_shape, three], outputs=[width],
+                                  name=f'{stage}.gather_width'))
+        
+        # Use default mesh size
+        mesh_h = f'{stage}.mesh_h'
+        mesh_w = f'{stage}.mesh_w'
+        inits.append(oh.make_tensor(mesh_h, TensorProto.INT64, [], [self.default_mesh_size[0]]))
+        inits.append(oh.make_tensor(mesh_w, TensorProto.INT64, [], [self.default_mesh_size[1]]))
         
         # Sensor fusion: R_fused = α * R_homography + (1-α) * R_IMU
         alpha = f'{stage}.alpha'
@@ -454,8 +461,7 @@ class DeshakeCoreFull(MicroblockBase):
         result.appendInput(gdc_coeffs, type=TensorProto.FLOAT, shape=[4])
         result.appendInput(imu_rotation, type=TensorProto.FLOAT, shape=[3, 3])
         result.appendInput(camera_matrix, type=TensorProto.FLOAT, shape=[3, 3])
-        result.appendInput(mesh_size, type=TensorProto.INT64, shape=[2])
-        result.appendInput(image_size, type=TensorProto.INT64, shape=[2])
+        result.appendInput(current_frame, type=TensorProto.FLOAT, shape=['n', 3, 'h', 'w'])
         result.appendInput(smoothing_alpha, type=TensorProto.FLOAT, shape=[1])
         result.appendInput(horizon_leveling, type=TensorProto.INT64, shape=[1])
         result.appendInput(dynamic_zoom, type=TensorProto.INT64, shape=[1])

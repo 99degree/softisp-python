@@ -12,6 +12,12 @@ Refined 3-stage architecture with clear separation:
 This allows reusing pre and post stages while having various implementations
 in the core stage.
 
+ADAPTIVE DIMENSION EXTRACTION ✅
+- All classes now extract height and width from input tensors
+- No need to supply image_size or mesh_size as parameters
+- Uses ONNX Shape and Gather operators for runtime dimension extraction
+- Default mesh size: 16x16 (configurable via class attribute)
+
 ================================================================================
 3-STAGE ARCHITECTURE SUMMARY
 ================================================================================
@@ -78,6 +84,8 @@ Input:
 - vcm_pos [1] : VCM position (lens focal length parameter)
 - gdc_params [4] : GDC base parameters [k1_base, k2_base, p1_base, p2_base]
 
+Note: Height and width are extracted from current_frame tensor shape.
+
 Output:
 - homography [3,3] : 3x3 homography matrix (OpenCV format)
 - confidence [1] : Confidence score (0-1)
@@ -126,8 +134,7 @@ Input:
 - homography [3,3] : 3x3 homography matrix from pre-processing
 - gdc_coeffs [4] : GDC coefficients from pre-processing
 - camera_matrix [3,3] : 3x3 camera intrinsic matrix K
-- mesh_size [2] : [mesh_h, mesh_w] for mesh-based warp (default: [16, 16])
-- image_size [2] : [height, width] for grid generation
+- current_frame [n,3,h,w] : Current video frame (for dimension extraction)
 
 Full Implementation Additional Inputs:
 - imu_rotation [3,3] : 3x3 IMU rotation matrix (from CPU coordinator)
@@ -135,6 +142,9 @@ Full Implementation Additional Inputs:
 - horizon_leveling [1] : Enable horizon leveling (0=off, 1=on)
 - dynamic_zoom [1] : Enable dynamic zoom (0=off, 1=on)
 - rolling_shutter [1] : Enable rolling shutter correction (0=off, 1=on)
+
+Note: Height and width are extracted from current_frame tensor shape.
+      Mesh size uses default 16x16 (configurable via default_mesh_size attribute).
 
 Output:
 - mesh_grid [mesh_h,mesh_w,2] : Mesh vertex grid for warp
@@ -179,8 +189,9 @@ Class:
 Input:
 - current_frame [n,3,h,w] : Current video frame (YUV or RGB)
 - mesh_grid [mesh_h,mesh_w,2] : Mesh vertex grid from core processing
-- image_size [2] : [height, width] for upsampling
 - padding_mode [1] : Padding mode (0=zeros, 1=border, 2=reflect)
+
+Note: Height and width are extracted from current_frame tensor shape.
 
 Output:
 - stabilized_frame [n,3,h,w] : Stabilized frame (YUV or RGB)
@@ -230,9 +241,7 @@ COMPLETE PIPELINE EXAMPLE (Simple)
       "class": "deshake_core_simple",
       "inputs": ["deshake_pre"],
       "params": {
-        "camera_matrix": [[1000.0, 0.0, 960.0], [0.0, 1000.0, 540.0], [0.0, 0.0, 1.0]],
-        "mesh_size": [16, 16],
-        "image_size": [1080, 1920]
+        "camera_matrix": [[1000.0, 0.0, 960.0], [0.0, 1000.0, 540.0], [0.0, 0.0, 1.0]]
       }
     },
     
@@ -240,7 +249,6 @@ COMPLETE PIPELINE EXAMPLE (Simple)
       "class": "deshake_post",
       "inputs": ["yuv", "deshake_core"],
       "params": {
-        "image_size": [1080, 1920],
         "padding_mode": 2
       }
     }
@@ -275,8 +283,6 @@ COMPLETE PIPELINE EXAMPLE (Full with IMU)
       "params": {
         "imu_rotation": [[1.0, 0.0, 0.0], [0.0, 1.0, 0.0], [0.0, 0.0, 1.0]],
         "camera_matrix": [[1000.0, 0.0, 960.0], [0.0, 1000.0, 540.0], [0.0, 0.0, 1.0]],
-        "mesh_size": [16, 16],
-        "image_size": [1080, 1920],
         "smoothing_alpha": 0.8,
         "horizon_leveling": 1,
         "dynamic_zoom": 1,
@@ -288,7 +294,6 @@ COMPLETE PIPELINE EXAMPLE (Full with IMU)
       "class": "deshake_post",
       "inputs": ["yuv", "deshake_core"],
       "params": {
-        "image_size": [1080, 1920],
         "padding_mode": 2
       }
     }
@@ -345,6 +350,12 @@ KEY BENEFITS
    - Pre on NPU (feature extraction, GDC calculation)
    - Core on CPU/DSP (mesh generation, fusion)
    - Post on GPU (grid mapping)
+
+✅ **Adaptive Dimension Extraction**
+   - Height and width extracted from input tensors
+   - No need to supply image_size or mesh_size as parameters
+   - Uses ONNX Shape and Gather operators for runtime extraction
+   - Default mesh size: 16x16 (configurable via class attribute)
 
 ✅ **Flexible Architecture**
    - Works with or without IMU data

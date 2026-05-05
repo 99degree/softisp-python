@@ -1,0 +1,11 @@
+{
+  "canonical_name": "test_autoexposure_simple",
+  "stages": {
+    "autoexposure": {
+      "class": "autoexposure_simple",
+      "version": "v2",
+      "family": "autoexposure_simple",
+      "inputs": []
+    }
+  }
+}

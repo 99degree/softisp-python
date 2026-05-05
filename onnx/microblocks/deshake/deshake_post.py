@@ -122,19 +122,27 @@ class DeshakePost(MicroblockBase):
         upstream = prev_stages[0] if prev_stages else stage
         current_frame = f'{upstream}.current_frame'
         mesh_grid = f'{upstream}.mesh_grid'
-        image_size = f'{upstream}.image_size'
         padding_mode = f'{upstream}.padding_mode'
         stabilized_frame = f'{stage}.stabilized_frame'
         
-        # Extract image dimensions
+        # Extract image dimensions from current_frame tensor shape
+        # current_frame shape: [n, 3, h, w]
+        frame_shape = f'{stage}.frame_shape'
+        nodes.append(oh.make_node('Shape', inputs=[current_frame], outputs=[frame_shape],
+                                  name=f'{stage}.shape_frame'))
+        
+        # Extract height (index 2) and width (index 3) from shape
         height = f'{stage}.height'
         width = f'{stage}.width'
-        nodes.append(oh.make_node('Slice', inputs=[image_size], outputs=[height],
-                                  name=f'{stage}.slice_height',
-                                  starts=[0], ends=[1], axes=[0]))
-        nodes.append(oh.make_node('Slice', inputs=[image_size], outputs=[width],
-                                  name=f'{stage}.slice_width',
-                                  starts=[1], ends=[2], axes=[0]))
+        two = f'{stage}.two'
+        three = f'{stage}.three'
+        inits.append(oh.make_tensor(two, TensorProto.INT64, [], [2]))
+        inits.append(oh.make_tensor(three, TensorProto.INT64, [], [3]))
+        
+        nodes.append(oh.make_node('Gather', inputs=[frame_shape, two], outputs=[height],
+                                  name=f'{stage}.gather_height'))
+        nodes.append(oh.make_node('Gather', inputs=[frame_shape, three], outputs=[width],
+                                  name=f'{stage}.gather_width'))
         
         # Upsample mesh grid to full resolution
         # Use Resize operator to interpolate mesh vertices
@@ -225,7 +233,6 @@ class DeshakePost(MicroblockBase):
         result = BuildResult(outputs, nodes, inits, vis)
         result.appendInput(current_frame, type=TensorProto.FLOAT, shape=['n', 3, 'h', 'w'])
         result.appendInput(mesh_grid, type=TensorProto.FLOAT, shape=['mesh_h', 'mesh_w', 2])
-        result.appendInput(image_size, type=TensorProto.INT64, shape=[2])
         result.appendInput(padding_mode, type=TensorProto.INT64, shape=[1])
         return result
 
