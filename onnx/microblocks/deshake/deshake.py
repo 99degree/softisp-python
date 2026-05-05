@@ -8,15 +8,19 @@ class DeshakeBase(MicroblockBase):
     """
     DeshakeBase (v0)
     ---------------
-    Independent global motion compensation for video stabilization.
-
+    POST-PROCESS STAGE: Video stabilization after YUV/RGB conversion.
+    
+    Position in Pipeline: After YUV/RGB conversion, before output.
+    
+    Operates on final color-corrected frames (YUV or RGB format).
+    
     Needs:
-        - current_frame [n,3,h,w] : Current video frame
-        - prev_frame [n,3,h,w] : Previous video frame
+        - current_frame [n,3,h,w] : Current video frame (YUV or RGB)
+        - prev_frame [n,3,h,w] : Previous video frame (YUV or RGB)
         - motion_strength [1] : Motion compensation strength (0-1)
 
     Provides:
-        - stabilized_frame [n,3,h,w] : Stabilized frame
+        - stabilized_frame [n,3,h,w] : Stabilized frame (YUV or RGB)
         - motion_vector [2] : Global motion vector (dx, dy)
 
     Behavior:
@@ -25,6 +29,10 @@ class DeshakeBase(MicroblockBase):
 
     Complexity: ~15-20 ONNX nodes
     Use Case: Real-time video stabilization on mobile devices
+    
+    Pipeline Position:
+        Input: YUV/RGB frame (after color correction)
+        Output: Stabilized YUV/RGB frame
     """
     name = 'deshake_base'
     family = 'deshake_base'
@@ -182,18 +190,22 @@ class DeshakeBase(MicroblockBase):
 class DeshakeV1(MicroblockBase):
     """
     DeshakeV1 (v1)
-    ------------
-    Independent grid-based motion compensation for video stabilization.
-
+    -------------
+    POST-PROCESS STAGE: Grid-based video stabilization after YUV/RGB conversion.
+    
+    Position in Pipeline: After YUV/RGB conversion, before output.
+    
+    Operates on final color-corrected frames (YUV or RGB format).
+    
     Needs:
-        - current_frame [n,3,h,w] : Current video frame
-        - prev_frame [n,3,h,w] : Previous video frame
+        - current_frame [n,3,h,w] : Current video frame (YUV or RGB)
+        - prev_frame [n,3,h,w] : Previous video frame (YUV or RGB)
         - motion_strength [1] : Motion compensation strength (0-1)
         - smoothing_factor [1] : Temporal smoothing factor (0-1)
         - grid_size [1] : Grid size (e.g., 8)
 
     Provides:
-        - stabilized_frame [n,3,h,w] : Stabilized frame
+        - stabilized_frame [n,3,h,w] : Stabilized frame (YUV or RGB)
         - motion_grid [grid_h,grid_w,2] : Per-grid motion vectors
 
     Behavior:
@@ -202,6 +214,10 @@ class DeshakeV1(MicroblockBase):
 
     Complexity: ~30-40 ONNX nodes
     Use Case: High-quality video stabilization
+    
+    Pipeline Position:
+        Input: YUV/RGB frame (after color correction)
+        Output: Stabilized YUV/RGB frame
     """
     name = 'deshake_v1'
     family = 'deshake_v1'
@@ -354,18 +370,22 @@ class DeshakeV1(MicroblockBase):
 class DeshakeV2(MicroblockBase):
     """
     DeshakeV2 (v2)
-    ------------
-    Independent feature-based motion compensation with RANSAC.
-
+    -------------
+    POST-PROCESS STAGE: Feature-based video stabilization after YUV/RGB conversion.
+    
+    Position in Pipeline: After YUV/RGB conversion, before output.
+    
+    Operates on final color-corrected frames (YUV or RGB format).
+    
     Needs:
-        - current_frame [n,3,h,w] : Current video frame
-        - prev_frame [n,3,h,w] : Previous video frame
+        - current_frame [n,3,h,w] : Current video frame (YUV or RGB)
+        - prev_frame [n,3,h,w] : Previous video frame (YUV or RGB)
         - motion_strength [1] : Motion compensation strength (0-1)
         - smoothing_factor [1] : Temporal smoothing factor (0-1)
         - ransac_threshold [1] : RANSAC outlier threshold
 
     Provides:
-        - stabilized_frame [n,3,h,w] : Stabilized frame
+        - stabilized_frame [n,3,h,w] : Stabilized frame (YUV or RGB)
         - homography [3,3] : 3x3 homography matrix
         - inlier_count [1] : Number of inlier features
 
@@ -375,6 +395,10 @@ class DeshakeV2(MicroblockBase):
 
     Complexity: ~50-60 ONNX nodes
     Use Case: Professional video stabilization
+    
+    Pipeline Position:
+        Input: YUV/RGB frame (after color correction)
+        Output: Stabilized YUV/RGB frame
     """
     name = 'deshake_v2'
     family = 'deshake_v2'
