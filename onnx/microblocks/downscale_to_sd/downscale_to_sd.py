@@ -175,7 +175,7 @@ class DownscaleToSDBase(ApplierPassthrough, MicroblockBase):
         return self._build(stage, prev_stages)
 
     def build_test_algo(self, stage: str, prev_stages=None):
-        return self.build_algo(stage, prev_stages)
+        return super().build_test_algo(stage, prev_stages)
 
 
 # === Subclasses with different targets ===

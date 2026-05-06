@@ -63,7 +63,7 @@ class CropWidthFixedBase(MicroblockBase):
         return self.build_applier(stage, prev_stages)
 
     def build_test_algo(self, stage: str, prev_stages=None):
-        return self.build_algo(stage, prev_stages)
+        return super().build_test_algo(stage, prev_stages)
 
 
 class CropWidth3CH(CropWidthFixedBase):
