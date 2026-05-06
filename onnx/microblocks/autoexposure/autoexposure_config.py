@@ -1,4 +1,11 @@
 # autoexposure_config.py
+
+
+def _n(stage, suffix):
+    """Generate unique node name per stage"""
+    return f"{stage}.{suffix}"
+
+
 """
 Configuration system for auto exposure microblock
 """

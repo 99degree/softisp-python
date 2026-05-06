@@ -5,6 +5,13 @@ from onnx import TensorProto
 import numpy as np
 
 
+def _n(stage, suffix):
+    """Generate unique node name per stage"""
+    return f"{stage}.{suffix}"
+
+
+
+
 # ============================================================================
 # SIMPLE COMPUTATION - Basic exposure calculation
 # ============================================================================
@@ -27,10 +34,10 @@ class AutoExposureSimple(MicroblockBase):
         upstream = prev_stages[0] if prev_stages else stage
         input_image = f"{upstream}.applier" if prev_stages else f"{stage}.input"
         
-        ev_name = f"{stage}.exposure_value"
-        gain_name = f"{stage}.gain"
-        target_name = f"{stage}.target"
-        brightness_name = f"{stage}.brightness"
+        ev_name = _n(stage, "exposure_value")
+        gain_name = _n(stage, "gain")
+        target_name = _n(stage, "target")
+        brightness_name = _n(stage, "brightness")
         
         nodes, inits, vis = [], [], []
         vis.append(oh.make_tensor_value_info(input_image, TensorProto.FLOAT, ["n",3,"h","w"]))
@@ -163,13 +170,13 @@ class AutoExposureStats(MicroblockBase):
         upstream = prev_stages[0] if prev_stages else stage
         input_image = f"{upstream}.applier" if prev_stages else f"{stage}.input"
         
-        r_stats_name = f"{stage}.r_stats"
-        g_stats_name = f"{stage}.g_stats"
-        b_stats_name = f"{stage}.b_stats"
-        weighted_stats_name = f"{stage}.weighted_stats"
-        ev_name = f"{stage}.exposure_value"
-        gain_name = f"{stage}.gain"
-        target_name = f"{stage}.target"
+        r_stats_name = _n(stage, "r_stats")
+        g_stats_name = _n(stage, "g_stats")
+        b_stats_name = _n(stage, "b_stats")
+        weighted_stats_name = _n(stage, "weighted_stats")
+        ev_name = _n(stage, "exposure_value")
+        gain_name = _n(stage, "gain")
+        target_name = _n(stage, "target")
         
         nodes, inits, vis = [], [], []
         vis.append(oh.make_tensor_value_info(input_image, TensorProto.FLOAT, ["n",3,"h","w"]))
@@ -337,13 +344,13 @@ class AutoExposureYUV(MicroblockBase):
         upstream = prev_stages[0] if prev_stages else stage
         input_yuv = f"{upstream}.applier" if prev_stages else f"{stage}.input"
         
-        y_channel_name = f"{stage}.y_channel"
-        u_channel_name = f"{stage}.u_channel"
-        v_channel_name = f"{stage}.v_channel"
-        y_stats_name = f"{stage}.y_stats"
-        ev_name = f"{stage}.exposure_value"
-        gain_name = f"{stage}.gain"
-        target_name = f"{stage}.target"
+        y_channel_name = _n(stage, "y_channel")
+        u_channel_name = _n(stage, "u_channel")
+        v_channel_name = _n(stage, "v_channel")
+        y_stats_name = _n(stage, "y_stats")
+        ev_name = _n(stage, "exposure_value")
+        gain_name = _n(stage, "gain")
+        target_name = _n(stage, "target")
         
         nodes, inits, vis = [], [], []
         vis.append(oh.make_tensor_value_info(input_yuv, TensorProto.FLOAT, ["n",3,"h","w"]))
@@ -488,10 +495,10 @@ class AutoExposureHistogram(MicroblockBase):
         upstream = prev_stages[0] if prev_stages else stage
         input_image = f"{upstream}.applier" if prev_stages else f"{stage}.input"
         
-        ev_name = f"{stage}.exposure_value"
-        gain_name = f"{stage}.gain"
-        target_name = f"{stage}.target"
-        brightness_name = f"{stage}.brightness"
+        ev_name = _n(stage, "exposure_value")
+        gain_name = _n(stage, "gain")
+        target_name = _n(stage, "target")
+        brightness_name = _n(stage, "brightness")
         
         nodes, inits, vis = [], [], []
         vis.append(oh.make_tensor_value_info(input_image, TensorProto.FLOAT, ["n",3,"h","w"]))
@@ -626,10 +633,10 @@ class AutoExposureMultiZone(MicroblockBase):
         upstream = prev_stages[0] if prev_stages else stage
         input_image = f"{upstream}.applier" if prev_stages else f"{stage}.input"
         
-        ev_name = f"{stage}.exposure_value"
-        gain_name = f"{stage}.gain"
-        target_name = f"{stage}.target"
-        brightness_name = f"{stage}.brightness"
+        ev_name = _n(stage, "exposure_value")
+        gain_name = _n(stage, "gain")
+        target_name = _n(stage, "target")
+        brightness_name = _n(stage, "brightness")
         
         nodes, inits, vis = [], [], []
         vis.append(oh.make_tensor_value_info(input_image, TensorProto.FLOAT, ["n",3,"h","w"]))

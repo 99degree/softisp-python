@@ -7,7 +7,7 @@
     "stride_remove": {"class":"stride_remove_crop","version":"v0","inputs":["bayernorm", "image_desc"]},
     "blacklevel": {"class":"blacklevel","version":"v2","inputs":["stride_remove"]},
     "demosaic": {"class":"demosaic_mhc","version":"v1","inputs":["blacklevel", "bayer2cfa"]},
-    "autoexposure": {"class":"autoexposure","version":"v1","inputs":["demosaic"]},
+    "autoexposure": {"class":"autoexposure","version":"v1.legacy","inputs":["demosaic"]},
     "awb": {"class":"wb_avg_v1","version":"v1","inputs":["autoexposure"]},
     "ccm": {"class":"ccm_quadratic_v1","version":"v1","inputs":["awb"]},
     "tonemap": {"class":"tonemap_base","version":"v0","inputs":["ccm"]},

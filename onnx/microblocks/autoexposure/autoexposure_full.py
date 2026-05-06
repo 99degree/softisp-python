@@ -5,15 +5,28 @@ from onnx import TensorProto
 import numpy as np
 
 
+def _n(stage, suffix):
+    """Generate unique node name per stage"""
+    return f"{stage}.{suffix}"
+
+
+
+
 class AutoExposureBase(MicroblockBase):
     """
-    Auto Exposure Base Class
+    Auto Exposure Base Class - DO NOT REGISTER
     Input:  [n,3,h,w] input RGB image from previous stage (demosaic)
     Output:  auto exposure parameters (exposure value, gain)
     """
 
-    name = "autoexposure"
-    version = "v1"
+    # Set name=None to prevent auto-registration
+    name = None
+    version = None
+
+    def _make_output_name(self, stage, suffix):
+        """Generate unique output name with class prefix"""
+        cls_name = self.__class__.__name__
+        return f"{stage}.{cls_name}.{suffix}"
 
     def build_applier(self, stage, prev_stages=None):
         """
@@ -24,12 +37,19 @@ class AutoExposureBase(MicroblockBase):
         upstream = prev_stages[0] if prev_stages and len(prev_stages) > 0 else stage
         input_image = f"{upstream}.applier"
         
-        # Output names
-        ev_name = f"{stage}.exposure_value"
-        gain_name = f"{stage}.gain"
-        target_name = f"{stage}.target"
-        brightness_name = f"{stage}.brightness"
-        ratio_name = f"{stage}.brightness_ratio"
+        # Output names - use unique suffixes (used as FunctionProto outputs)
+        ev_name = self._make_output_name(stage, "ev")
+        gain_name = self._make_output_name(stage, "gain")
+        target_name = self._make_output_name(stage, "target")
+        brightness_name = self._make_output_name(stage, "brightness")
+        ratio_name = self._make_output_name(stage, "ratio")
+        brightness_4d = self._make_output_name(stage, "brightness_4d")
+        
+        # Internal names for initializers (auto-converted to Constant nodes by _to_function_and_call)
+        ev_const = self._make_output_name(stage, "ev_c")
+        gain_const = self._make_output_name(stage, "gain_c")
+        target_const = self._make_output_name(stage, "target_c")
+        one_const = self._make_output_name(stage, "one_c")
         
         nodes, inits, vis = [], [], []
         
@@ -37,44 +57,42 @@ class AutoExposureBase(MicroblockBase):
         vis.append(oh.make_tensor_value_info(input_image, TensorProto.FLOAT, ["n",3,"h","w"]))
         
         # 1. Calculate mean brightness of the image across all channels
-        # First reduce across height and width to get per-channel means
         mean_node = oh.make_node("ReduceMean", inputs=[input_image], outputs=[brightness_name], 
                               axes=[2, 3], keepdims=0)
         nodes.append(mean_node)
         
         # 2. Reshape brightness to add batch dimension back
-        brightness_reshape = f"{stage}.brightness_4d"
-        reshape_node = oh.make_node("Reshape", inputs=[brightness_name, "one_const"], 
-                                   outputs=[brightness_reshape])
+        # Only create initializer - _to_function_and_call will create Constant node
+        inits.append(oh.make_tensor(one_const, TensorProto.INT64, [4], [1, 1, 1, 1]))
+        reshape_node = oh.make_node("Reshape", inputs=[brightness_name, one_const], 
+                                   outputs=[brightness_4d])
         nodes.append(reshape_node)
-        inits.append(oh.make_tensor("one_const", TensorProto.INT64, [4], [1, 1, 1, 1]))
         
         # 3. Create target brightness (18% gray card standard)
-        target_tensor = oh.make_tensor(target_name, TensorProto.FLOAT, [1], [0.18])  # Standard 18% gray target
-        inits.append(target_tensor)
-        target_node = oh.make_node("Constant", inputs=[], outputs=[target_name], value=target_tensor, 
-                                 name=f"{target_name}_const")
-        nodes.append(target_node)
+        # Only create initializer - _to_function_and_call will create Constant node
+        # Then use Identity to bridge from internal const to function output
+        inits.append(oh.make_tensor(target_const, TensorProto.FLOAT, [1], [0.18]))
+        # Identity bridge from internal constant to function output
+        identity_node = oh.make_node("Identity", inputs=[target_const], outputs=[target_name])
+        nodes.append(identity_node)
         
         # 4. Calculate brightness to target ratio
-        ratio_node = oh.make_node("Div", inputs=[brightness_reshape, target_name], outputs=[ratio_name])
+        ratio_node = oh.make_node("Div", inputs=[brightness_4d, target_name], outputs=[ratio_name])
         nodes.append(ratio_node)
         
-        # 5. Calculate exposure adjustment: log2(target_brightness / current_brightness)
-        # In ONNX this would be: log2(target/brightness) = log(target)/log(2) - log(brightness)/log(2)
-        # For now we'll use a simplified approach
-        ev_tensor = oh.make_tensor(ev_name, TensorProto.FLOAT, [1], [0.0])  # Placeholder
-        inits.append(ev_tensor)
-        ev_node = oh.make_node("Constant", inputs=[], outputs=[ev_name], value=ev_tensor, 
-                              name=f"{ev_name}_const")
-        nodes.append(ev_node)
+        # 5. Calculate exposure adjustment
+        # Only create initializer
+        inits.append(oh.make_tensor(ev_const, TensorProto.FLOAT, [1], [0.0]))
+        # Identity bridge from internal constant to function output
+        identity_node2 = oh.make_node("Identity", inputs=[ev_const], outputs=[ev_name])
+        nodes.append(identity_node2)
         
-        # 6. Calculate gain adjustment (simplified)
-        gain_tensor = oh.make_tensor(gain_name, TensorProto.FLOAT, [1], [1.0])
-        inits.append(gain_tensor)
-        gain_node = oh.make_node("Constant", inputs=[], outputs=[gain_name], value=gain_tensor, 
-                                name=f"{gain_name}_const")
-        nodes.append(gain_node)
+        # 6. Calculate gain adjustment
+        # Only create initializer
+        inits.append(oh.make_tensor(gain_const, TensorProto.FLOAT, [1], [1.0]))
+        # Identity bridge from internal constant to function output
+        identity_node3 = oh.make_node("Identity", inputs=[gain_const], outputs=[gain_name])
+        nodes.append(identity_node3)
         
         # Add output value info
         vis.append(oh.make_tensor_value_info(brightness_name, TensorProto.FLOAT, [1]))
@@ -109,9 +127,9 @@ class AutoExposureBase(MicroblockBase):
 
 class AutoExposureV1(AutoExposureBase):
     name = "autoexposure"
-    version = "v1"
+    version = "v1.legacy"
 
 
 class AutoExposurePassthrough(AutoExposureBase):
     name = "autoexposure"
-    version = "v1-passthrough"
+    version = "v1.passthrough"

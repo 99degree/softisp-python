@@ -3,33 +3,32 @@ from microblocks.base import BuildResult, MicroblockBase
 import onnx.helper as oh
 from onnx import TensorProto
 
+
+def _n(stage, suffix):
+    """Generate unique node name per stage"""
+    return f"{stage}.{suffix}"
+
+
+
 class AutoExposureBase(MicroblockBase):
-    """Auto Exposure Base Class"""
+    """Auto Exposure Base Class - DO NOT REGISTER - used as parent class"""
     
-    name = "autoexposure"
-    version = "v1"
+    # Use invalid name so this class won't be auto-registered
+    name = None
+    version = None
     
-    def build_applier(self, stage, prev_stages=None):
-        """Build auto exposure applier"""
-        # This would be the full implementation when ONNX is available
-        return "Mock BuildResult"
-
-    def build_coordinator(self, stage, prev_stages=None):
-        return "Mock coordinator"
-
     def build_algo(self, stage, prev_stages=None):
-        """Build the algorithmic part of the auto exposure block."""
-        return "Mock algorithm"
+        # Delegate to subclass implementation
+        return super().build_algo(stage, prev_stages)
 
-    def build_test_algo(self, stage, prev_stages=None):
-        """Test algorithmic implementation of auto exposure."""
-        return "Mock test algorithm"
 
-# Version-specific classes
+# Version-specific classes with proper implementations
 class AutoExposureV1(AutoExposureBase):
-    name = "autoexposure"
-    version = "v1"
+    """Auto Exposure V1 - delegate to actual implementation"""
+    # Don't override name/version - will be set by subclass
+    pass
+
 
 class AutoExposurePassthrough(AutoExposureBase):
-    name = "autoexposure"
-    version = "v1-passthrough"
+    """Auto Exposure Passthrough - delegate to actual implementation"""
+    pass

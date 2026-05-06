@@ -3,11 +3,17 @@ from microblocks.base import BuildResult, MicroblockBase
 import onnx.helper as oh
 from onnx import TensorProto
 
+
+def _n(stage, suffix):
+    """Generate unique node name per stage"""
+    return f"{stage}.{suffix}"
+
+
 class AutoExposureBase(MicroblockBase):
-    """Auto Exposure Base Class"""
+    """Auto Exposure Base Class - DO NOT REGISTER"""
     
-    name = "autoexposure"
-    version = "v1"
+    name = None
+    version = None
     
     def build_algo(self, stage, prev_stages=None):
         """
@@ -23,9 +29,9 @@ class AutoExposureBase(MicroblockBase):
         input_image = f"{upstream}.applier" if prev_stages else f"{stage}.input"
         
         # Output names for statistics
-        stats_name = f"{stage}.stats"
-        ev_name = f"{stage}.exposure_value"
-        gain_name = f"{stage}.gain"
+        stats_name = _n(stage, "stats")
+        ev_name = _n(stage, "ev")
+        gain_name = _n(stage, "gain")
         
         nodes, inits, vis = [], [], []
         
@@ -38,16 +44,16 @@ class AutoExposureBase(MicroblockBase):
         nodes.append(mean_node)
         
         # Create exposure value calculation (simplified)
-        ev_tensor = oh.make_tensor(f"{stage}.exposure_value_const", TensorProto.FLOAT, [1], [1.0])
-        gain_tensor = oh.make_tensor(f"{stage}.gain_const", TensorProto.FLOAT, [1], [1.0])
+        ev_tensor = oh.make_tensor(ev_name + "_c", TensorProto.FLOAT, [1], [1.0])
+        gain_tensor = oh.make_tensor(gain_name + "_c", TensorProto.FLOAT, [1], [1.0])
         
         inits.extend([ev_tensor, gain_tensor])
         
         # Create constant nodes
         ev_node = oh.make_node("Constant", inputs=[], outputs=[ev_name], value=ev_tensor, 
-                             name=f"{ev_name}_const")
+                             name=ev_name + "_c")
         gain_node = oh.make_node("Constant", inputs=[], outputs=[gain_name], value=gain_tensor, 
-                                name=f"{gain_name}_const")
+                                name=gain_name + "_c")
         
         nodes.extend([ev_node, gain_node])
         
@@ -128,9 +134,9 @@ class AutoExposureYUV(AutoExposureBase):
         input_yuv = f"{upstream}.applier" if prev_stages else f"{stage}.input"
         
         # Output names for statistics
-        stats_name = f"{stage}.stats"
-        ev_name = f"{stage}.exposure_value"
-        gain_name = f"{stage}.gain"
+        stats_name = _n(stage, "stats")
+        ev_name = _n(stage, "ev")
+        gain_name = _n(stage, "gain")
         
         nodes, inits, vis = [], [], []
         
@@ -156,16 +162,16 @@ class AutoExposureYUV(AutoExposureBase):
         nodes.append(mean_node)
         
         # Create exposure value calculation
-        ev_tensor = oh.make_tensor(f"{stage}.exposure_value_const", TensorProto.FLOAT, [1], [1.0])
-        gain_tensor = oh.make_tensor(f"{stage}.gain_const", TensorProto.FLOAT, [1], [1.0])
+        ev_tensor = oh.make_tensor(ev_name + "_c", TensorProto.FLOAT, [1], [1.0])
+        gain_tensor = oh.make_tensor(gain_name + "_c", TensorProto.FLOAT, [1], [1.0])
         
         inits.extend([ev_tensor, gain_tensor])
         
         # Create constant nodes
         ev_node = oh.make_node("Constant", inputs=[], outputs=[ev_name], value=ev_tensor, 
-                             name=f"{ev_name}_const")
+                             name=ev_name + "_c")
         gain_node = oh.make_node("Constant", inputs=[], outputs=[gain_name], value=gain_tensor, 
-                                name=f"{gain_name}_const")
+                                name=gain_name + "_c")
         
         nodes.extend([ev_node, gain_node])
         

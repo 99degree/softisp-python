@@ -6,6 +6,13 @@ Utility functions for auto exposure microblock
 import numpy as np
 
 
+def _n(stage, suffix):
+    """Generate unique node name per stage"""
+    return f"{stage}.{suffix}"
+
+
+
+
 class AutoExposureError(Exception):
     """Base exception for auto exposure errors"""
     pass
