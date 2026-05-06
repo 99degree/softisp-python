@@ -56,7 +56,7 @@ class CoordinateFusionBase(MicroblockBase):
         """
         Not used - algo extracts homography from frames.
         """
-        return BuildResult({}, [], [], [])
+        return super().build_algo(stage, prev_stages)
 
     def build_coordinator(self, stage: str, prev_stages=None):
         """
@@ -391,7 +391,7 @@ class CoordinateFusionBase(MicroblockBase):
         """
         Not used - applier handles application.
         """
-        return BuildResult({}, [], [], [])
+        return super().build_applier(stage, prev_stages)
 
     def build_test_algo(self, stage: str, prev_stages=None):
         return self.build_coordinator(stage, prev_stages)
@@ -445,7 +445,7 @@ class CoordinateFusionV1(MicroblockBase):
         """
         Not used - algo extracts homography from frames.
         """
-        return BuildResult({}, [], [], [])
+        return super().build_algo(stage, prev_stages)
 
     def build_coordinator(self, stage: str, prev_stages=None):
         """
@@ -804,7 +804,7 @@ class CoordinateFusionV1(MicroblockBase):
         """
         Not used - applier handles application.
         """
-        return BuildResult({}, [], [], [])
+        return super().build_applier(stage, prev_stages)
 
     def build_test_algo(self, stage: str, prev_stages=None):
         return self.build_coordinator(stage, prev_stages)
@@ -864,7 +864,7 @@ class CoordinateFusionV2(MicroblockBase):
         """
         Not used - algo extracts homography from frames.
         """
-        return BuildResult({}, [], [], [])
+        return super().build_algo(stage, prev_stages)
 
     def build_coordinator(self, stage: str, prev_stages=None):
         """
@@ -1244,7 +1244,7 @@ class CoordinateFusionV2(MicroblockBase):
         """
         Not used - applier handles application.
         """
-        return BuildResult({}, [], [], [])
+        return super().build_applier(stage, prev_stages)
 
     def build_test_algo(self, stage: str, prev_stages=None):
         return self.build_coordinator(stage, prev_stages)

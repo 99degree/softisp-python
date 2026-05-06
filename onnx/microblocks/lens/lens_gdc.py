@@ -61,7 +61,7 @@ class LensGDCBase(MicroblockBase):
         return BuildResult(outputs, nodes, inits, vis).appendInput(f'{prev_stages[0]}.applier')
 
     def build_coordinator(self, stage: str, prev_stages=None):
-        return BuildResult({}, [], [], [])
+        return super().build_coordinator(stage, prev_stages)
 
     def build_test_algo(self, stage: str, prev_stages=None):
         return self.build_algo(stage, prev_stages)
@@ -228,7 +228,7 @@ class LensGDCV1(MicroblockBase):
         return result
 
     def build_coordinator(self, stage: str, prev_stages=None):
-        return BuildResult({}, [], [], [])
+        return super().build_coordinator(stage, prev_stages)
 
     def build_test_algo(self, stage: str, prev_stages=None):
         return self.build_algo(stage, prev_stages)
@@ -427,7 +427,7 @@ class LensGDCV2(MicroblockBase):
         return result
 
     def build_coordinator(self, stage: str, prev_stages=None):
-        return BuildResult({}, [], [], [])
+        return super().build_coordinator(stage, prev_stages)
 
     def build_test_algo(self, stage: str, prev_stages=None):
         return self.build_algo(stage, prev_stages)

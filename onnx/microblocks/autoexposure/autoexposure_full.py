@@ -96,7 +96,7 @@ class AutoExposureBase(MicroblockBase):
         return result
 
     def build_coordinator(self, stage, prev_stages=None):
-        return BuildResult({}, [], [], [])
+        return super().build_coordinator(stage, prev_stages)
 
     def build_algo(self, stage, prev_stages=None):
         """Build the algorithmic part of the auto exposure block."""

@@ -533,12 +533,29 @@ class MicroblockBase:
     # Shared registry instance
     registry: Registry = Registry.getInstance()
 
-    # Abstract build entry points (to be implemented by subclasses)
     def build_applier(self, stage: str, prev_stages=None):
-        raise NotImplementedError
+        """Default: Identity passthrough for applier."""
+        upstream = prev_stages[0] if prev_stages and len(prev_stages) > 0 else stage
+        inp = f'{upstream}.applier'
+        out = f'{stage}.applier'
+        dim = getattr(self, 'dim', 4)
+        nodes = [oh.make_node('Identity', inputs=[inp], outputs=[out],
+                              name=f'{stage}_applier_passthrough')]
+        vis = [oh.make_tensor_value_info(out, TensorProto.FLOAT, ['n', dim, 'H', 'W'])]
+        outputs = {'applier': {'name': out, 'type': TensorProto.FLOAT, 'shape': ['n', dim, 'H', 'W']}}
+        return BuildResult(outputs, nodes, [], vis).appendInput(inp, type=TensorProto.FLOAT)
 
     def build_algo(self, stage: str, prev_stages=None):
-        raise NotImplementedError
+        """Default: Identity passthrough for algo."""
+        upstream = prev_stages[0] if prev_stages and len(prev_stages) > 0 else stage
+        inp = f'{upstream}.applier'
+        out = f'{stage}.applier'
+        dim = getattr(self, 'dim', 4)
+        nodes = [oh.make_node('Identity', inputs=[inp], outputs=[out],
+                              name=f'{stage}_algo_passthrough')]
+        vis = [oh.make_tensor_value_info(out, TensorProto.FLOAT, ['n', dim, 'H', 'W'])]
+        outputs = {'applier': {'name': out, 'type': TensorProto.FLOAT, 'shape': ['n', dim, 'H', 'W']}}
+        return BuildResult(outputs, nodes, [], vis).appendInput(inp, type=TensorProto.FLOAT)
 
     def build_coordinator(self, stage: str, prev_stages=None):
         """Default: Identity passthrough for coordinator."""

@@ -104,7 +104,7 @@ class DeshakeMeshGridFull(MicroblockBase):
         """
         Not used - algo extracts homography from frames.
         """
-        return BuildResult({}, [], [], [])
+        return super().build_coordinator(stage, prev_stages)
 
     def build_coordinator(self, stage: str, prev_stages=None):
         """
@@ -470,7 +470,7 @@ class DeshakeMeshGridFull(MicroblockBase):
         """
         Not used - applier handles application.
         """
-        return BuildResult({}, [], [], [])
+        return super().build_coordinator(stage, prev_stages)
 
     def build_test_algo(self, stage: str, prev_stages=None):
         return self.build_coordinator(stage, prev_stages)

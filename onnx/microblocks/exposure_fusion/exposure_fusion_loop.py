@@ -50,7 +50,7 @@ class ExposureFusionLoopBase(MicroblockBase):
         """
         Not used - algo extracts exposure info.
         """
-        return BuildResult({}, [], [], [])
+        return super().build_coordinator(stage, prev_stages)
 
     def build_coordinator(self, stage: str, prev_stages=None):
         """
@@ -231,7 +231,7 @@ class ExposureFusionLoopBase(MicroblockBase):
         """
         Not used - applier handles tone mapping.
         """
-        return BuildResult({}, [], [], [])
+        return super().build_coordinator(stage, prev_stages)
 
     def build_test_algo(self, stage: str, prev_stages=None):
         return self.build_coordinator(stage, prev_stages)
@@ -288,7 +288,7 @@ class ExposureFusionLoopV1(MicroblockBase):
         """
         Not used - algo extracts exposure info.
         """
-        return BuildResult({}, [], [], [])
+        return super().build_coordinator(stage, prev_stages)
 
     def build_coordinator(self, stage: str, prev_stages=None):
         """
@@ -507,7 +507,7 @@ class ExposureFusionLoopV1(MicroblockBase):
         """
         Not used - applier handles tone mapping.
         """
-        return BuildResult({}, [], [], [])
+        return super().build_coordinator(stage, prev_stages)
 
     def build_test_algo(self, stage: str, prev_stages=None):
         return self.build_coordinator(stage, prev_stages)

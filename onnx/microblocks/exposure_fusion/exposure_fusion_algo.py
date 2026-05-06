@@ -102,13 +102,13 @@ class ExposureFusionAlgoBase(MicroblockBase):
         """
         Not used - control loop handles fusion.
         """
-        return BuildResult({}, [], [], [])
+        return super().build_coordinator(stage, prev_stages)
 
     def build_applier(self, stage: str, prev_stages=None):
         """
         Not used - applier handles fusion.
         """
-        return BuildResult({}, [], [], [])
+        return super().build_applier(stage, prev_stages)
 
     def build_test_algo(self, stage: str, prev_stages=None):
         return self.build_algo(stage, prev_stages)
@@ -268,13 +268,13 @@ class ExposureFusionAlgoV1(MicroblockBase):
         """
         Not used - control loop handles fusion.
         """
-        return BuildResult({}, [], [], [])
+        return super().build_coordinator(stage, prev_stages)
 
     def build_applier(self, stage: str, prev_stages=None):
         """
         Not used - applier handles fusion.
         """
-        return BuildResult({}, [], [], [])
+        return super().build_applier(stage, prev_stages)
 
     def build_test_algo(self, stage: str, prev_stages=None):
         return self.build_algo(stage, prev_stages)
@@ -446,13 +446,13 @@ class ExposureFusionAlgoV2(MicroblockBase):
         """
         Not used - control loop handles fusion.
         """
-        return BuildResult({}, [], [], [])
+        return super().build_coordinator(stage, prev_stages)
 
     def build_applier(self, stage: str, prev_stages=None):
         """
         Not used - applier handles fusion.
         """
-        return BuildResult({}, [], [], [])
+        return super().build_applier(stage, prev_stages)
 
     def build_test_algo(self, stage: str, prev_stages=None):
         return self.build_algo(stage, prev_stages)

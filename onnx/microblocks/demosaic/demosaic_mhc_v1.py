@@ -75,7 +75,7 @@ class DemosaicMHCV1(DemosaicBase):
         super().__init__(version=version)
 
     def build_coordinator(self, stage, prev_stages=None):
-        return BuildResult({}, [], [], [])
+        return super().build_coordinator(stage, prev_stages)
 
     def build_algo(self, stage, prev_stages=None):
         return super().build_algo(stage, prev_stages)

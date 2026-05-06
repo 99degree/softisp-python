@@ -54,13 +54,13 @@ class DeshakeApplierV2(MicroblockBase):
         """
         Not used - algo extracts homography from frames.
         """
-        return BuildResult({}, [], [], [])
+        return super().build_algo(stage, prev_stages)
 
     def build_coordinator(self, stage: str, prev_stages=None):
         """
         Not used - control loop handles sensor fusion.
         """
-        return BuildResult({}, [], [], [])
+        return super().build_coordinator(stage, prev_stages)
 
     def build_applier(self, stage: str, prev_stages=None):
         """

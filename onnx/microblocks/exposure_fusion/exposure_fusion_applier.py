@@ -42,13 +42,13 @@ class ExposureFusionApplierBase(MicroblockBase):
         """
         Not used - algo extracts exposure info.
         """
-        return BuildResult({}, [], [], [])
+        return super().build_algo(stage, prev_stages)
 
     def build_coordinator(self, stage: str, prev_stages=None):
         """
         Not used - control loop handles fusion.
         """
-        return BuildResult({}, [], [], [])
+        return super().build_coordinator(stage, prev_stages)
 
     def build_applier(self, stage: str, prev_stages=None):
         """
@@ -145,13 +145,13 @@ class ExposureFusionApplierV1(MicroblockBase):
         """
         Not used - algo extracts exposure info.
         """
-        return BuildResult({}, [], [], [])
+        return super().build_algo(stage, prev_stages)
 
     def build_coordinator(self, stage: str, prev_stages=None):
         """
         Not used - control loop handles fusion.
         """
-        return BuildResult({}, [], [], [])
+        return super().build_coordinator(stage, prev_stages)
 
     def build_applier(self, stage: str, prev_stages=None):
         """
@@ -281,13 +281,13 @@ class ExposureFusionApplierV2(MicroblockBase):
         """
         Not used - algo extracts exposure info.
         """
-        return BuildResult({}, [], [], [])
+        return super().build_algo(stage, prev_stages)
 
     def build_coordinator(self, stage: str, prev_stages=None):
         """
         Not used - control loop handles fusion.
         """
-        return BuildResult({}, [], [], [])
+        return super().build_coordinator(stage, prev_stages)
 
     def build_applier(self, stage: str, prev_stages=None):
         """
