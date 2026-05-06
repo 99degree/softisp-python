@@ -240,13 +240,13 @@ class DeshakePre(MicroblockBase):
         """
         Not used in pre-processing stage.
         """
-        return super().build_coordinator(stage, prev_stages)
+        return super().build_algo(stage, prev_stages)
 
     def build_applier(self, stage: str, prev_stages=None):
         """
         Not used in pre-processing stage.
         """
-        return super().build_coordinator(stage, prev_stages)
+        return super().build_applier(stage, prev_stages)
 
     def build_test_algo(self, stage: str, prev_stages=None):
         return self.build_algo(stage, prev_stages)

@@ -63,7 +63,7 @@ class DeshakeLoopBase(MicroblockBase):
         """
         Not used - algo extracts homography from frames.
         """
-        return super().build_coordinator(stage, prev_stages)
+        return super().build_algo(stage, prev_stages)
 
     def build_coordinator(self, stage: str, prev_stages=None):
         """
@@ -607,7 +607,7 @@ class DeshakeLoopBase(MicroblockBase):
         """
         Not used - applier handles application.
         """
-        return super().build_coordinator(stage, prev_stages)
+        return super().build_applier(stage, prev_stages)
 
     def build_test_algo(self, stage: str, prev_stages=None):
         return self.build_coordinator(stage, prev_stages)
@@ -661,7 +661,7 @@ class DeshakeLoopV1(MicroblockBase):
         """
         Not used - algo extracts homography from frames.
         """
-        return super().build_coordinator(stage, prev_stages)
+        return super().build_test_algo(stage, prev_stages)
 
     def build_coordinator(self, stage: str, prev_stages=None):
         """
@@ -1173,7 +1173,7 @@ class DeshakeLoopV1(MicroblockBase):
         """
         Not used - applier handles application.
         """
-        return super().build_coordinator(stage, prev_stages)
+        return super().build_applier(stage, prev_stages)
 
     def build_test_algo(self, stage: str, prev_stages=None):
         return self.build_coordinator(stage, prev_stages)

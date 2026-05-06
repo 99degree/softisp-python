@@ -426,7 +426,7 @@ class DeshakeCoreSimple(MicroblockBase):
         """
         Not used in core processing stage.
         """
-        return super().build_coordinator(stage, prev_stages)
+        return super().build_applier(stage, prev_stages)
 
     def build_test_algo(self, stage: str, prev_stages=None):
         return self.build_algo(stage, prev_stages)
